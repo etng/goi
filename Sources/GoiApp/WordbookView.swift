@@ -338,6 +338,7 @@ struct SettingsView: View {
     @State private var ankiStatus = "未检测"
     @State private var copied = false
     @State private var theme = AppTheme.current
+    @State private var axTrusted = TextGrabber.isTrusted
 
     struct Row: Identifiable {
         let id: String
@@ -395,6 +396,38 @@ struct SettingsView: View {
                 .pickerStyle(.segmented)
                 .fixedSize()
                 .onChange(of: theme) { AppTheme.apply($0) }
+            }
+            .padding(12)
+
+            Divider()
+
+            // ---- text selection (划词取词) permission ----
+            VStack(alignment: .leading, spacing: 8) {
+                Text("划词取词").font(.headline)
+                HStack(spacing: 8) {
+                    Image(systemName: axTrusted ? "checkmark.circle.fill" : "exclamationmark.triangle.fill")
+                        .foregroundColor(axTrusted ? .green : .orange)
+                    VStack(alignment: .leading, spacing: 1) {
+                        Text("在其它应用里选中文字，按 ⌘⌥Space 直接查词").font(.system(size: 12))
+                        Text(axTrusted ? "已授权「辅助功能」，可以使用" : "需要「辅助功能」权限才能读取选中的文字")
+                            .font(.system(size: 11))
+                            .foregroundColor(.secondary)
+                    }
+                    Spacer()
+                    if !axTrusted {
+                        Button("开启权限…") {
+                            TextGrabber.requestTrust()
+                            NSWorkspace.shared.open(URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility")!)
+                        }
+                    }
+                    Button("重新检测") { axTrusted = TextGrabber.isTrusted }
+                }
+                if !axTrusted {
+                    Text("点「开启权限…」后，在弹出的系统设置里把 Goi 的开关打开，再回来点「重新检测」。")
+                        .font(.system(size: 11))
+                        .foregroundColor(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
             }
             .padding(12)
 
