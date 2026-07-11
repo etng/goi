@@ -105,15 +105,10 @@ enum EntryHTML {
            2000px "回到顶部" scaffold) — neutralize it or the iframe grows
            a screenful of blank space */
         html, body { height: auto !important; min-height: 0 !important; }
-        body { margin: 8px 12px; font-family: -apple-system; background: #fff; }
-        /* dark mode: invert the whole document (handles arbitrary per-dict
-           CSS), then re-invert media so images/photos look right */
-        @media (prefers-color-scheme: dark) {
-            html { filter: invert(0.92) hue-rotate(180deg); background: #1c1c1e; }
-            img, video, svg, canvas, [style*="background-image"] {
-                filter: invert(1) hue-rotate(180deg);
-            }
-        }
+        /* entries keep their native light styling — dictionary CSS is authored
+           for a white background, and inverting it wrecks colors/contrast.
+           In dark mode the entry sits as a white card on the dark canvas. */
+        body { margin: 8px 12px; font-family: -apple-system; background: #fff; color: #111; }
         </style>
         <script>
         const DICT_ID = "\(dict.id)";
@@ -189,13 +184,17 @@ enum EntryHTML {
         #toast { position: fixed; left: 50%; bottom: 18px; transform: translateX(-50%);
                  background: rgba(40,40,40,.92); color: #fff; padding: 7px 16px;
                  border-radius: 16px; font-size: 12px; display: none; z-index: 9; }
+        /* dark mode dresses the chrome only — the entry iframe stays a white
+           card so dictionary content renders as designed */
         @media (prefers-color-scheme: dark) {
             body { background: #1c1c1e; }
             .banner { background: #3a3320; border-color: #5c5330; color: #e8dca0; }
-            .empty { color: #888; }
+            .empty { color: #8a8a8e; }
+            .wordmeta { color: #98989d; }
             details { background: #2c2c2e; border-color: #3a3a3c; }
             summary { background: #363638; color: #e5e5e7; }
-            iframe { background: #1c1c1e; }
+            details .count { color: #8a8a8e; }
+            iframe { background: #fff; }
         }
         </style>
         <script>
