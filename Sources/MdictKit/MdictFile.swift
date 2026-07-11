@@ -15,10 +15,46 @@ public final class MdictFile {
     // hot-path copies of header flags (header attribute access is a dictionary lookup)
     private let lowercasesKeys: Bool
     private let stripsKeys: Bool
-    public private(set) var keys: [KeyEntry] = []
 
-    public var entryCount: Int { keys.count }
+    // Key table split in two: the compact record-offset array is always kept
+    // (record access needs it), while the headword strings — the memory hog
+    // for large dictionaries — can be released once an external index (the
+    // app's SQLite) has captured them. See releaseKeyStrings().
+    public private(set) var keyRecordOffsets: [UInt64] = []
+    private var keyStrings: [String] = []
+
+    public var entryCount: Int { keyRecordOffsets.count }
     public var isResource: Bool { header.isResource }
+
+    /// The full key table (headword + offset). O(n); for tools/indexing, not
+    /// hot paths. Empty strings if headwords were released.
+    public var keys: [KeyEntry] {
+        (0..<keyRecordOffsets.count).map {
+            KeyEntry(key: $0 < keyStrings.count ? keyStrings[$0] : "", recordOffset: keyRecordOffsets[$0])
+        }
+    }
+
+    /// Headword at a key index (empty if released). Cheap, for indexing.
+    public func keyString(at index: Int) -> String {
+        index < keyStrings.count ? keyStrings[index] : ""
+    }
+
+    /// Streams every (headword, keyIndex) pair to `body`, for building an
+    /// external index without materializing a `[KeyEntry]` array.
+    public func forEachKey(_ body: (String, Int) -> Void) {
+        for i in 0..<keyStrings.count { body(keyStrings[i], i) }
+    }
+
+    /// Drops the in-memory headword strings and exact-lookup table, keeping
+    /// only what record access needs. Call after an external index has the
+    /// headwords; afterwards lookup()/suggest() return nothing.
+    public func releaseKeyStrings() {
+        lookupTableLock.lock()
+        defer { lookupTableLock.unlock() }
+        keyStrings = []
+        _lookupTable = nil
+        _collisions = []
+    }
 
     // record section
     private var recordCompSizes: [Int] = []
@@ -35,13 +71,17 @@ public final class MdictFile {
     private var _lookupTable: [String: Int]?
     private var _collisions: [[Int]] = []
     private lazy var sortedRecordOffsets: [UInt64] = {
-        var offsets = Set(keys.map(\.recordOffset))
+        var offsets = Set(keyRecordOffsets)
         offsets.insert(totalDecompSize)
         return offsets.sorted()
     }()
     private var cachedBlock: (index: Int, content: Data)?
 
-    public init(url: URL) throws {
+    /// Opens a dictionary. When `keyOffsets` is supplied (from a previously
+    /// persisted index), the keyword blocks are skipped entirely — no
+    /// decompression, no headword strings — which is the fast, low-memory
+    /// reopen path. Pass nil for a full parse (needed to build the index).
+    public init(url: URL, keyOffsets: [UInt64]? = nil) throws {
         self.url = url
         self.data = try Data(contentsOf: url, options: .alwaysMapped)
 
@@ -90,6 +130,16 @@ public final class MdictFile {
             keyIndexDecompLength = Int(try again.u64be())
         }
 
+        // fast reopen: offsets come from the persisted index, skip the whole
+        // keyword-block section (no decompression, no strings)
+        if let keyOffsets, keyOffsets.count == declaredEntries {
+            _ = keyIndexDecompLength
+            try reader.skip(keyIndexLength + keyBlocksLength)
+            keyRecordOffsets = keyOffsets
+            try parseRecordSection(&reader, numWidth: numWidth)
+            return
+        }
+
         var keyIndex = try reader.bytes(keyIndexLength)
         if v2 {
             if header.encrypted & 2 != 0 {
@@ -104,7 +154,8 @@ public final class MdictFile {
         // ---- key blocks ----
         let keyBlocksStart = reader.pos
         var offset = keyBlocksStart
-        keys.reserveCapacity(declaredEntries)
+        keyStrings.reserveCapacity(declaredEntries)
+        keyRecordOffsets.reserveCapacity(declaredEntries)
         for (comp, decomp) in blockSizes {
             var blockReader = DataReader(data, at: offset)
             let block = try MdictBlock.decompress(try blockReader.bytes(comp), decompressedSize: decomp)
@@ -114,12 +165,16 @@ public final class MdictFile {
         guard offset - keyBlocksStart == keyBlocksLength else {
             throw MdictError.corrupted("key blocks length mismatch")
         }
-        guard keys.count == declaredEntries else {
-            throw MdictError.corrupted("parsed \(keys.count) keys, header declares \(declaredEntries)")
+        guard keyRecordOffsets.count == declaredEntries else {
+            throw MdictError.corrupted("parsed \(keyRecordOffsets.count) keys, header declares \(declaredEntries)")
         }
         reader.pos = offset
+        try parseRecordSection(&reader, numWidth: numWidth)
+    }
 
-        // ---- record section ----
+    // MARK: - Parsing helpers
+
+    private func parseRecordSection(_ reader: inout DataReader, numWidth: Int) throws {
         let numRecordBlocks = Int(try reader.number(width: numWidth))
         _ = try reader.number(width: numWidth) // total entries, equals key count
         let recordIndexLength = Int(try reader.number(width: numWidth))
@@ -151,8 +206,6 @@ public final class MdictFile {
             throw MdictError.corrupted("record blocks length mismatch")
         }
     }
-
-    // MARK: - Parsing helpers
 
     /// Returns (compressedSize, decompressedSize) for each key block.
     private static func parseKeyIndex(
@@ -201,7 +254,8 @@ public final class MdictFile {
             guard let key = header.codec.decode(keyData) else {
                 throw MdictError.corrupted("undecodable key at block offset \(i)")
             }
-            keys.append(KeyEntry(key: key, recordOffset: recordOffset))
+            keyStrings.append(key)
+            keyRecordOffsets.append(recordOffset)
             i = min(j + termWidth, bytes.count)
         }
     }
@@ -263,10 +317,10 @@ public final class MdictFile {
         lookupTableLock.lock()
         defer { lookupTableLock.unlock() }
         guard _lookupTable == nil else { return }
-        var table = [String: Int](minimumCapacity: keys.count)
+        var table = [String: Int](minimumCapacity: keyStrings.count)
         var collisions: [[Int]] = []
-        for (i, entry) in keys.enumerated() {
-            let norm = normalize(entry.key)
+        for (i, key) in keyStrings.enumerated() {
+            let norm = normalize(key)
             if let existing = table[norm] {
                 if existing >= 0 {
                     collisions.append([existing, i])
@@ -303,16 +357,16 @@ public final class MdictFile {
         let p = normalize(prefix)
         guard !p.isEmpty, limit > 0 else { return [] }
         var lo = 0
-        var hi = keys.count
+        var hi = keyStrings.count
         while lo < hi {
             let mid = (lo + hi) / 2
-            if normalize(keys[mid].key) < p { lo = mid + 1 } else { hi = mid }
+            if normalize(keyStrings[mid]) < p { lo = mid + 1 } else { hi = mid }
         }
         var out: [String] = []
         var i = lo
-        while i < keys.count, out.count < limit {
-            guard normalize(keys[i].key).hasPrefix(p) else { break }
-            if out.last != keys[i].key { out.append(keys[i].key) }
+        while i < keyStrings.count, out.count < limit {
+            guard normalize(keyStrings[i]).hasPrefix(p) else { break }
+            if out.last != keyStrings[i] { out.append(keyStrings[i]) }
             i += 1
         }
         return out
@@ -321,7 +375,7 @@ public final class MdictFile {
     // MARK: - Record access
 
     public func record(at keyIndex: Int) throws -> Data {
-        let start = keys[keyIndex].recordOffset
+        let start = keyRecordOffsets[keyIndex]
         // entry ends at the next distinct record offset, or at end of data
         var lo = 0, hi = sortedRecordOffsets.count
         while lo < hi {

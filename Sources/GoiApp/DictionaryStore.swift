@@ -21,18 +21,34 @@ final class LoadedDictionary {
     let folder: URL
     /// lowercased basename -> URL for loose files beside the dictionary (css, images)
     let looseFiles: [String: URL]
+    /// On-disk headword index; nil if it couldn't be built (falls back to
+    /// MdictFile's in-memory lookup).
+    let index: DictIndex?
 
-    init(id: String, mdx: MdictFile, resources: [MdictFile], folder: URL, looseFiles: [String: URL]) {
+    init(id: String, mdx: MdictFile, resources: [MdictFile], folder: URL, looseFiles: [String: URL], index: DictIndex?) {
         self.id = id
         self.mdx = mdx
         self.resources = resources
         self.folder = folder
         self.looseFiles = looseFiles
+        self.index = index
         let headerTitle = mdx.header.title?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         self.title = headerTitle.isEmpty || headerTitle.lowercased() == "title (no html code allowed)"
             ? mdx.url.deletingPathExtension().lastPathComponent
             : headerTitle
         self.displayTitle = self.title
+    }
+
+    /// Headword lookup — via the on-disk index if present (headwords may have
+    /// been released from RAM), otherwise MdictFile's in-memory table.
+    func lookup(_ word: String) -> [Int] {
+        if let index { return index.lookup(norm: mdx.normalize(word)) }
+        return mdx.lookup(word)
+    }
+
+    func suggest(prefix: String, limit: Int) -> [String] {
+        if let index { return index.suggest(normPrefix: mdx.normalize(prefix), limit: limit) }
+        return mdx.suggest(prefix: prefix, limit: limit)
     }
 
     /// Resolves a resource referenced from an entry: first the MDD archives,
@@ -114,7 +130,28 @@ final class DictionaryStore {
                 }
                 progress(mdxURL.deletingPathExtension().lastPathComponent)
                 do {
-                    let mdx = try MdictFile(url: mdxURL)
+                    let offsetsURL = dir.appendingPathComponent("goi-offsets.bin")
+                    var mdx: MdictFile
+                    var index: DictIndex?
+
+                    // fast reopen: persisted offsets + a valid index → skip
+                    // key-block parsing and keep no headword strings in RAM
+                    if let savedOffsets = Self.loadOffsets(offsetsURL) {
+                        let candidate = try MdictFile(url: mdxURL, keyOffsets: savedOffsets)
+                        if let existing = DictIndex(openExistingIn: dir, expectedCount: candidate.entryCount) {
+                            mdx = candidate
+                            index = existing
+                        } else {
+                            // index stale/missing — full parse + rebuild
+                            mdx = try MdictFile(url: mdxURL)
+                            index = DictIndex(buildIn: dir, mdx: mdx)
+                            Self.saveOffsets(mdx.keyRecordOffsets, to: offsetsURL)
+                        }
+                    } else {
+                        mdx = try MdictFile(url: mdxURL)
+                        index = DictIndex(buildIn: dir, mdx: mdx)
+                        if index != nil { Self.saveOffsets(mdx.keyRecordOffsets, to: offsetsURL) }
+                    }
                     var resources: [MdictFile] = []
                     let mdds = entries
                         .filter { $0.pathExtension.lowercased() == "mdd" }
@@ -135,7 +172,7 @@ final class DictionaryStore {
                     let id = Self.fingerprint(of: mdxURL) ?? dir.lastPathComponent
                     loaded.append(LoadedDictionary(
                         id: id, mdx: mdx, resources: resources,
-                        folder: dir, looseFiles: Self.indexLooseFiles(in: dir)
+                        folder: dir, looseFiles: Self.indexLooseFiles(in: dir), index: index
                     ))
                 } catch {
                     failed.append(DictFailure(
@@ -153,13 +190,34 @@ final class DictionaryStore {
             failures = failed
             isReady = true
             writeReport()
-            // build MDX lookup tables up front (in parallel) so the first query
-            // is instant; MDD resource tables build lazily on first media access
-            DispatchQueue.concurrentPerform(iterations: loaded.count) { i in
-                loaded[i].mdx.prepareIndex()
+            // headwords now live in each dictionary's on-disk index, so drop
+            // the in-memory strings; only the compact record-offset arrays and
+            // the mmap stay resident. Dictionaries without an index keep their
+            // in-memory table as a fallback.
+            for dict in loaded where dict.index != nil {
+                dict.mdx.releaseKeyStrings()
             }
             completion()
         }
+    }
+
+    /// Record-offset sidecar: a little-endian UInt64 array. Lets a dictionary
+    /// reopen without decompressing its key blocks.
+    private static func loadOffsets(_ url: URL) -> [UInt64]? {
+        guard let data = try? Data(contentsOf: url), data.count % 8 == 0, !data.isEmpty else { return nil }
+        return data.withUnsafeBytes { raw in
+            let buffer = raw.bindMemory(to: UInt64.self)
+            return (0..<buffer.count).map { UInt64(littleEndian: buffer[$0]) }
+        }
+    }
+
+    private static func saveOffsets(_ offsets: [UInt64], to url: URL) {
+        var data = Data(capacity: offsets.count * 8)
+        for value in offsets {
+            var le = value.littleEndian
+            withUnsafeBytes(of: &le) { data.append(contentsOf: $0) }
+        }
+        try? data.write(to: url)
     }
 
     private static func indexLooseFiles(in folder: URL) -> [String: URL] {
@@ -366,14 +424,14 @@ final class DictionaryStore {
         dictionaries.compactMap { dict in
             var seen = Set<Int>()
             var indices: [Int] = []
-            for hit in dict.mdx.lookup(word) {
+            for hit in dict.lookup(word) {
                 var index = hit
                 var hops = 0
                 while hops < 5,
                       let text = try? dict.mdx.text(at: index),
                       text.hasPrefix("@@@LINK=") {
                     let target = text.dropFirst(8).trimmingCharacters(in: .whitespacesAndNewlines)
-                    guard let next = dict.mdx.lookup(target).first else { break }
+                    guard let next = dict.lookup(target).first else { break }
                     index = next
                     hops += 1
                 }
@@ -389,7 +447,7 @@ final class DictionaryStore {
         var seen = Set<String>()
         var out: [String] = []
         for dict in dictionaries {
-            for key in dict.mdx.suggest(prefix: word, limit: 4) {
+            for key in dict.suggest(prefix: word, limit: 4) {
                 let display = key.trimmingCharacters(in: .whitespaces)
                 if seen.insert(display.lowercased()).inserted { out.append(display) }
             }

@@ -9,6 +9,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var panel: SearchPanel!
     private var statusItem: NSStatusItem!
     private var hotKey: HotKey?
+    private var selectionHotKey: HotKey?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.accessory)
@@ -19,17 +20,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         panel = SearchPanel(model: model)
 
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
+        let isDev = (Bundle.main.bundleIdentifier ?? "").hasSuffix(".dev")
         if let button = statusItem.button {
-            button.title = "語"
+            button.title = isDev ? "語ᴅ" : "語"
             button.font = .systemFont(ofSize: 14, weight: .medium)
             button.target = self
             button.action = #selector(statusItemClicked)
             button.sendAction(on: [.leftMouseUp, .rightMouseUp])
-            button.toolTip = "Goi — ⌥Space 查词"
+            button.toolTip = "Goi — ⌥Space 查词 · ⌘⌥Space 划词"
         }
 
         hotKey = HotKey(keyCode: UInt32(kVK_Space), modifiers: UInt32(optionKey)) { [weak self] in
             self?.panel.toggle()
+        }
+        // ⌘⌥Space: look up the text selected in whatever app is frontmost
+        selectionHotKey = HotKey(keyCode: UInt32(kVK_Space), modifiers: UInt32(optionKey | cmdKey)) { [weak self] in
+            self?.lookUpSelection()
         }
 
         NotificationCenter.default.addObserver(
@@ -175,6 +181,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         menu.addItem(.separator())
         menu.addItem(withTitle: "打开查词面板  ⌥Space", action: #selector(showPanel), keyEquivalent: "").target = self
+        menu.addItem(withTitle: "划词查询选中文本  ⌘⌥Space", action: #selector(triggerSelectionLookup), keyEquivalent: "").target = self
         menu.addItem(withTitle: "生词本", action: #selector(openWordbook), keyEquivalent: "").target = self
         menu.addItem(withTitle: "设置", action: #selector(openSettings), keyEquivalent: "").target = self
         menu.addItem(withTitle: "打开解析报告", action: #selector(openReport), keyEquivalent: "").target = self
@@ -189,7 +196,42 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     @objc private func openSettings() { panel.show(section: .settings) }
 
+    private func lookUpSelection() {
+        guard TextGrabber.isTrusted else {
+            promptForAccessibility()
+            return
+        }
+        // AX/clipboard reads must be off the hotkey callback's context
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            let grab = TextGrabber.grab()
+            DispatchQueue.main.async {
+                guard let self else { return }
+                guard let grab else {
+                    self.panel.show()
+                    return
+                }
+                self.panel.show(section: .search)
+                self.model.lookupSelection(grab.text, context: grab.context)
+            }
+        }
+    }
+
+    private func promptForAccessibility() {
+        let alert = NSAlert()
+        alert.messageText = "划词取词需要「辅助功能」权限"
+        alert.informativeText = "Goi 要读取其他应用里选中的文字。请在「系统设置 → 隐私与安全性 → 辅助功能」中打开 Goi 的开关，然后再次按 ⌘⌥Space。"
+        alert.addButton(withTitle: "打开系统设置")
+        alert.addButton(withTitle: "稍后")
+        NSApp.activate(ignoringOtherApps: true)
+        if alert.runModal() == .alertFirstButtonReturn {
+            TextGrabber.requestTrust()
+            NSWorkspace.shared.open(URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility")!)
+        }
+    }
+
     @objc private func showPanel() { panel.show() }
+
+    @objc private func triggerSelectionLookup() { lookUpSelection() }
 
     @objc private func openReport() { NSWorkspace.shared.open(DictionaryStore.reportURL) }
 

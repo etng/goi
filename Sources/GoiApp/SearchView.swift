@@ -137,6 +137,23 @@ final class SearchViewModel: ObservableObject {
         render(result)
     }
 
+    /// Look up text grabbed from another app (划词取词), recording the source
+    /// sentence as context for the wordbook / Anki example.
+    func lookupSelection(_ text: String, context: String?) {
+        section = .search
+        suppressLiveSearch = true
+        query = text
+        guard store.isReady else { return }
+        let result = store.search(text)
+        suggestions = result.isEmpty ? store.suggestions(for: text) : []
+        if !result.isEmpty, let lemma = result.resolvedWord {
+            vocab.recordLookup(surface: result.query, lemma: lemma, source: "selection", context: context)
+            vocab.recordHits(dictIDs: result.sections.map { $0.dict.id })
+            inWordbook = vocab.isInWordbook(lemma: lemma)
+        }
+        render(result)
+    }
+
     /// Jump to a word from history/wordbook — display only, no weight change.
     func browse(_ word: String) {
         section = .search
@@ -294,6 +311,8 @@ struct RootView: View {
         .frame(minWidth: 760, minHeight: 480)
     }
 
+    private var isDev: Bool { (Bundle.main.bundleIdentifier ?? "").hasSuffix(".dev") }
+
     private var content: some View {
         HStack(spacing: 0) {
             VStack(spacing: 6) {
@@ -317,6 +336,13 @@ struct RootView: View {
                     .help(section.label)
                 }
                 Spacer()
+                // app identity anchored at the ribbon's bottom-left
+                VStack(spacing: 1) {
+                    Text("語").font(.system(size: 15, weight: .medium))
+                    Text(isDev ? "Goi ᴅ" : "Goi").font(.system(size: 8))
+                }
+                .foregroundColor(.secondary)
+                .padding(.bottom, 2)
             }
             .padding(.vertical, 10)
             .padding(.horizontal, 5)
@@ -345,43 +371,41 @@ struct RootView: View {
     }
 }
 
-/// Title-bar strip: identity + status, and the window's only drag handle.
+/// Title-bar strip: the window's drag handle. Double-click zooms, matching
+/// the standard title-bar behaviour. Shows the current section label and a
+/// transient loading note only while dictionaries are still coming up.
 struct HeaderBar: View {
     @ObservedObject var model: SearchViewModel
 
     var body: some View {
         HStack(spacing: 8) {
             Spacer().frame(width: 62) // clear the traffic-light buttons
-            Text("語 Goi")
-                .font(.system(size: 12, weight: .semibold))
-                .foregroundColor(.secondary)
             Text(model.section.label)
-                .font(.system(size: 12))
-                .foregroundColor(.secondary.opacity(0.65))
-            Spacer()
-            Text(statusText)
-                .font(.system(size: 11))
+                .font(.system(size: 12, weight: .medium))
                 .foregroundColor(.secondary)
+            Spacer()
+            if !model.store.isReady {
+                Text("正在加载词典…")
+                    .font(.system(size: 11))
+                    .foregroundColor(.secondary)
+            }
         }
         .padding(.horizontal, 12)
         .frame(height: 34)
         .contentShape(Rectangle())
         .background(WindowDragArea())
     }
-
-    private var statusText: String {
-        if !model.store.isReady { return "正在加载词典…" }
-        var text = "\(model.store.dictionaries.count) 本词典"
-        if !model.store.failures.isEmpty { text += " · \(model.store.failures.count) 本不可解析" }
-        return text
-    }
 }
 
-/// Lets the header act as the window drag region.
+/// Lets the header act as the window drag region, with double-click-to-zoom.
 private struct WindowDragArea: NSViewRepresentable {
     final class DragView: NSView {
         override func mouseDown(with event: NSEvent) {
-            window?.performDrag(with: event)
+            if event.clickCount == 2 {
+                window?.zoom(nil)
+            } else {
+                window?.performDrag(with: event)
+            }
         }
     }
 

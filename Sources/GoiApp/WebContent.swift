@@ -209,8 +209,10 @@ enum EntryHTML {
             status = "正在加载词典…"
         } else if loadedCount == 0 && failureCount == 0 {
             status = "词典库是空的<br>到左侧 设置 → 添加词典… 选择你下载的 MDX 文件或目录<br>（克隆导入，不占额外空间，导入后原文件随意处置）"
+        } else if failureCount > 0 {
+            status = "输入即可查词<br><b>\(failureCount) 本词典暂时不可解析</b>（详见菜单栏 → 解析报告）"
         } else {
-            status = "已加载 \(loadedCount) 本词典" + (failureCount > 0 ? "，<b>\(failureCount) 本暂时不可解析</b>（详见菜单栏 → 解析报告）" : "")
+            status = "输入即可查词 · ⌘⌥Space 划词"
         }
         return """
         <!doctype html><html><head><meta charset="utf-8"><style>

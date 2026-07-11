@@ -3,8 +3,9 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
-./scripts/make-app.sh
+# release identity for published artifacts
+RELEASE=1 ./scripts/make-app.sh
 
 VERSION="$(tr -d '[:space:]' < VERSION)"
-( cd dist && /usr/bin/ditto -c -k --keepParent Goi.app Goi.zip )
+( cd dist && /usr/bin/ditto -c -k --keepParent "Goi.app" "Goi.zip" )
 echo "built dist/Goi.zip (version ${VERSION})"

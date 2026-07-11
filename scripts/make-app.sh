@@ -1,27 +1,39 @@
 #!/bin/bash
-# Builds Goi.app into dist/ from the SPM GoiApp product.
+# Builds Goi.app into dist/.
+#   RELEASE=1  -> production identity  (com.etng.goi,     "Goi")
+#   default    -> dev identity         (com.etng.goi.dev, "Goi (Dev)")
+# The distinct bundle id keeps a locally-run dev build's Accessibility grant
+# (for 划词取词) from colliding with an installed production build's.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
 swift build -c release --product GoiApp
-
 VERSION="$(tr -d '[:space:]' < VERSION)"
-APP=dist/Goi.app
+
+if [[ "${RELEASE:-0}" == "1" ]]; then
+  APP_NAME="Goi"
+  BUNDLE_ID="com.etng.goi"
+else
+  APP_NAME="Goi (Dev)"
+  BUNDLE_ID="com.etng.goi.dev"
+fi
+
+APP="dist/${APP_NAME}.app"
 rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS"
 
-cat > "$APP/Contents/Info.plist" <<'PLIST'
+cat > "$APP/Contents/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
     <key>CFBundleExecutable</key><string>GoiApp</string>
-    <key>CFBundleIdentifier</key><string>com.etng.goi</string>
-    <key>CFBundleName</key><string>Goi</string>
-    <key>CFBundleDisplayName</key><string>Goi</string>
+    <key>CFBundleIdentifier</key><string>${BUNDLE_ID}</string>
+    <key>CFBundleName</key><string>${APP_NAME}</string>
+    <key>CFBundleDisplayName</key><string>${APP_NAME}</string>
     <key>CFBundlePackageType</key><string>APPL</string>
-    <key>CFBundleShortVersionString</key><string>__VERSION__</string>
-    <key>CFBundleVersion</key><string>__VERSION__</string>
+    <key>CFBundleShortVersionString</key><string>${VERSION}</string>
+    <key>CFBundleVersion</key><string>${VERSION}</string>
     <key>LSMinimumSystemVersion</key><string>13.0</string>
     <key>LSUIElement</key><true/>
     <key>NSHighResolutionCapable</key><true/>
@@ -29,9 +41,6 @@ cat > "$APP/Contents/Info.plist" <<'PLIST'
 </dict>
 </plist>
 PLIST
-
-# substitute version into the plist
-/usr/bin/sed -i '' "s/__VERSION__/${VERSION}/g" "$APP/Contents/Info.plist"
 
 cp .build/release/GoiApp "$APP/Contents/MacOS/GoiApp"
 
@@ -43,5 +52,4 @@ fi
 
 codesign --force --sign - "$APP" >/dev/null 2>&1
 
-echo "built $APP"
-echo "run:  open $APP"
+echo "built $APP  (${BUNDLE_ID}, v${VERSION})"

@@ -72,9 +72,9 @@ final class VocabStore {
             PRIMARY KEY(dict_id, day)
         );
         """)
-        // migration: familiarity provenance (auto | manual | anki); harmless
-        // no-op when the column already exists
+        // migrations (harmless no-ops when the column already exists)
         exec("ALTER TABLE word ADD COLUMN familiarity_source TEXT NOT NULL DEFAULT 'auto'")
+        exec("ALTER TABLE lookup_log ADD COLUMN context TEXT")
     }
 
     /// Direct familiarity write (e.g. Anki review data flowing back).
@@ -92,11 +92,12 @@ final class VocabStore {
     /// Auto-wordbook threshold: looked up at least twice.
     private static let autoThreshold = 2
 
-    func recordLookup(surface: String, lemma: String, source: String) {
+    func recordLookup(surface: String, lemma: String, source: String, context: String? = nil) {
         queue.sync {
             let now = Date().timeIntervalSince1970
-            run("INSERT INTO lookup_log(surface, lemma, source, ts) VALUES(?,?,?,?)",
-                [.text(surface), .text(lemma), .text(source), .real(now)])
+            run("INSERT INTO lookup_log(surface, lemma, source, ts, context) VALUES(?,?,?,?,?)",
+                [.text(surface), .text(lemma), .text(source), .real(now),
+                 context.map { Value.text($0) } ?? .null])
 
             if var word = fetchWord(lemma) {
                 var familiarity = word.manual
@@ -514,6 +515,7 @@ final class VocabStore {
         case text(String)
         case int(Int64)
         case real(Double)
+        case null
     }
 
     private func exec(_ sql: String) {
@@ -536,6 +538,7 @@ final class VocabStore {
             case .text(let s): sqlite3_bind_text(stmt, index, s, -1, SQLITE_TRANSIENT)
             case .int(let n): sqlite3_bind_int64(stmt, index, n)
             case .real(let d): sqlite3_bind_double(stmt, index, d)
+            case .null: sqlite3_bind_null(stmt, index)
             }
         }
     }
