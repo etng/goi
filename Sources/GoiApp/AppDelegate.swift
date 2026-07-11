@@ -9,8 +9,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var panel: SearchPanel!
     private var statusItem: NSStatusItem!
     private var hotKey: HotKey?
-    private var wordbookWindow: NSWindow?
-    private var settingsWindow: NSWindow?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.accessory)
@@ -33,6 +31,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             self?.panel.toggle()
         }
 
+        NotificationCenter.default.addObserver(
+            forName: .goiReloadRequested, object: nil, queue: .main
+        ) { [weak self] _ in
+            self?.loadDictionaries()
+        }
+
         loadDictionaries()
     }
 
@@ -46,6 +50,27 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func dictionariesLoaded() {
         statusItem.button?.appearsDisabled = false
         model.showWelcome()
+
+        // in-app dependency prompt (not just a line in the report)
+        if !Mecab.isAvailable, !UserDefaults.standard.bool(forKey: "mecabPromptDismissed") {
+            let alert = NSAlert()
+            alert.alertStyle = .informational
+            alert.messageText = "未检测到 mecab"
+            alert.informativeText = "日语变形还原（食べました→食べる）需要 mecab。\n\n在终端运行：\n\(Mecab.installCommand)\n\n装好后在设置里点「重新检测」即生效，无需重启。"
+            alert.addButton(withTitle: "复制安装命令")
+            alert.addButton(withTitle: "稍后")
+            alert.addButton(withTitle: "不再提醒")
+            NSApp.activate(ignoringOtherApps: true)
+            switch alert.runModal() {
+            case .alertFirstButtonReturn:
+                NSPasteboard.general.clearContents()
+                NSPasteboard.general.setString(Mecab.installCommand, forType: .string)
+            case .alertThirdButtonReturn:
+                UserDefaults.standard.set(true, forKey: "mecabPromptDismissed")
+            default:
+                break
+            }
+        }
 
         // never silent: parse failures get an explicit prompt
         if !store.failures.isEmpty {
@@ -105,53 +130,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         menu.addItem(.separator())
         menu.addItem(withTitle: "打开查词面板  ⌥Space", action: #selector(showPanel), keyEquivalent: "").target = self
-        menu.addItem(withTitle: "生词本…", action: #selector(openWordbook), keyEquivalent: "").target = self
-        menu.addItem(withTitle: "词典顺序…", action: #selector(openSettings), keyEquivalent: "").target = self
+        menu.addItem(withTitle: "生词本", action: #selector(openWordbook), keyEquivalent: "").target = self
+        menu.addItem(withTitle: "设置", action: #selector(openSettings), keyEquivalent: "").target = self
         menu.addItem(withTitle: "打开解析报告", action: #selector(openReport), keyEquivalent: "").target = self
         menu.addItem(.separator())
-        menu.addItem(withTitle: "更换词典目录…", action: #selector(chooseRoot), keyEquivalent: "").target = self
         menu.addItem(withTitle: "重新加载词典", action: #selector(reload), keyEquivalent: "").target = self
         menu.addItem(.separator())
         menu.addItem(withTitle: "退出 Goi", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
         return menu
     }
 
-    @objc private func openWordbook() {
-        NSApp.activate(ignoringOtherApps: true)
-        if wordbookWindow == nil {
-            let window = NSWindow(
-                contentRect: NSRect(x: 0, y: 0, width: 560, height: 480),
-                styleMask: [.titled, .closable, .resizable],
-                backing: .buffered, defer: false
-            )
-            window.title = "Goi 生词本"
-            window.isReleasedWhenClosed = false
-            window.center()
-            wordbookWindow = window
-        }
-        // fresh content each open so the list reflects the latest lookups
-        wordbookWindow?.contentView = NSHostingView(rootView: WordbookView(vocab: vocab, store: store))
-        wordbookWindow?.makeKeyAndOrderFront(nil)
-    }
+    @objc private func openWordbook() { panel.show(section: .wordbook) }
 
-    @objc private func openSettings() {
-        NSApp.activate(ignoringOtherApps: true)
-        if settingsWindow == nil {
-            let window = NSWindow(
-                contentRect: NSRect(x: 0, y: 0, width: 460, height: 520),
-                styleMask: [.titled, .closable],
-                backing: .buffered, defer: false
-            )
-            window.title = "Goi 设置"
-            window.isReleasedWhenClosed = false
-            window.center()
-            settingsWindow = window
-        }
-        settingsWindow?.contentView = NSHostingView(
-            rootView: SettingsView(store: store) { [weak self] in self?.model.orderChanged() }
-        )
-        settingsWindow?.makeKeyAndOrderFront(nil)
-    }
+    @objc private func openSettings() { panel.show(section: .settings) }
 
     @objc private func showPanel() { panel.show() }
 

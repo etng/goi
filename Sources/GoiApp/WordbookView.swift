@@ -81,7 +81,7 @@ struct WordbookView: View {
                     .padding(8)
             }
         }
-        .frame(width: 560, height: 480)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
         .onAppear(perform: reload)
     }
 
@@ -193,10 +193,17 @@ struct WordbookView: View {
     }
 }
 
+extension Notification.Name {
+    static let goiReloadRequested = Notification.Name("goi.reload.requested")
+}
+
 struct SettingsView: View {
     let store: DictionaryStore
     var onReorder: () -> Void
     @State private var items: [Row] = []
+    @State private var mecabPath: String? = Mecab.path
+    @State private var ankiStatus = "未检测"
+    @State private var copied = false
 
     struct Row: Identifiable {
         let id: String
@@ -205,14 +212,83 @@ struct SettingsView: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text("词典顺序")
-                .font(.headline)
-                .padding([.top, .horizontal], 12)
-            Text("拖动排序。顺序决定查词面板的 tab 顺序与「全部」视图里各词典的排列。")
-                .font(.system(size: 11))
-                .foregroundColor(.secondary)
-                .padding(.horizontal, 12)
+        VStack(alignment: .leading, spacing: 0) {
+            // ---- dictionaries directory ----
+            VStack(alignment: .leading, spacing: 6) {
+                Text("词典目录").font(.headline)
+                HStack {
+                    Text(store.rootURL.path)
+                        .font(.system(size: 12, design: .monospaced))
+                        .foregroundColor(.secondary)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                    Spacer()
+                    Button("更换…") { chooseRoot() }
+                    Button("重新加载") {
+                        NotificationCenter.default.post(name: .goiReloadRequested, object: nil)
+                    }
+                }
+            }
+            .padding(12)
+
+            Divider()
+
+            // ---- dependencies ----
+            VStack(alignment: .leading, spacing: 8) {
+                Text("依赖").font(.headline)
+                HStack(spacing: 8) {
+                    Image(systemName: mecabPath != nil ? "checkmark.circle.fill" : "xmark.circle.fill")
+                        .foregroundColor(mecabPath != nil ? .green : .orange)
+                    VStack(alignment: .leading, spacing: 1) {
+                        Text("mecab — 日语变形还原（食べました→食べる）").font(.system(size: 12))
+                        Text(mecabPath ?? "未安装：\(Mecab.installCommand)")
+                            .font(.system(size: 11, design: .monospaced))
+                            .foregroundColor(.secondary)
+                    }
+                    Spacer()
+                    if mecabPath == nil {
+                        Button(copied ? "已复制" : "复制安装命令") {
+                            NSPasteboard.general.clearContents()
+                            NSPasteboard.general.setString(Mecab.installCommand, forType: .string)
+                            copied = true
+                        }
+                    }
+                    Button("重新检测") {
+                        mecabPath = Mecab.path
+                        copied = false
+                    }
+                }
+                HStack(spacing: 8) {
+                    Image(systemName: "n.circle")
+                        .foregroundColor(.secondary)
+                    VStack(alignment: .leading, spacing: 1) {
+                        Text("AnkiConnect — 生词本同步到 Anki").font(.system(size: 12))
+                        Text(ankiStatus + (AnkiClient.apiKey != nil ? "（已自动读取 API key）" : ""))
+                            .font(.system(size: 11))
+                            .foregroundColor(.secondary)
+                    }
+                    Spacer()
+                    Button("检测连接") {
+                        ankiStatus = "检测中…"
+                        DispatchQueue.global().async {
+                            let status = AnkiClient.probe()
+                            DispatchQueue.main.async { ankiStatus = status }
+                        }
+                    }
+                }
+            }
+            .padding(12)
+
+            Divider()
+
+            // ---- dictionary order ----
+            VStack(alignment: .leading, spacing: 6) {
+                Text("词典顺序").font(.headline)
+                Text("这里或查词页的 tab 条上都可以拖动排序；顺序即优先级（决定 tab 顺序、「全部」视图排列、Anki 释义来源）。tab 右键可设默认词典。")
+                    .font(.system(size: 11))
+                    .foregroundColor(.secondary)
+            }
+            .padding([.top, .horizontal], 12)
             List {
                 ForEach(items) { row in
                     HStack {
@@ -233,8 +309,21 @@ struct SettingsView: View {
             }
             .listStyle(.inset)
         }
-        .frame(width: 460, height: 520)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
         .onAppear(perform: reload)
+    }
+
+    private func chooseRoot() {
+        let dialog = NSOpenPanel()
+        dialog.canChooseDirectories = true
+        dialog.canChooseFiles = false
+        dialog.directoryURL = store.rootURL
+        dialog.prompt = "使用此目录"
+        dialog.message = "选择存放 MDX/MDD 词典的目录"
+        if dialog.runModal() == .OK, let url = dialog.url {
+            store.rootURL = url
+            NotificationCenter.default.post(name: .goiReloadRequested, object: nil)
+        }
     }
 
     private func reload() {

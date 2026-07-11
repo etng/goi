@@ -30,6 +30,13 @@ cat > "$APP/Contents/Info.plist" <<'PLIST'
 PLIST
 
 cp .build/release/GoiApp "$APP/Contents/MacOS/GoiApp"
+
+# donation QR codes shown on the About page
+if compgen -G "assets/donate/*.png" >/dev/null || compgen -G "assets/donate/*.jpg" >/dev/null; then
+  mkdir -p "$APP/Contents/Resources/donate"
+  cp assets/donate/*.png assets/donate/*.jpg "$APP/Contents/Resources/donate/" 2>/dev/null || true
+fi
+
 codesign --force --sign - "$APP" >/dev/null 2>&1
 
 echo "built $APP"

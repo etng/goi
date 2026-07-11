@@ -16,13 +16,39 @@ enum AnkiClient {
         var errorDescription: String? { message }
     }
 
+    /// AnkiConnect can require an API key. Priority: manual override in
+    /// UserDefaults("ankiApiKey"), then auto-read from the addon's own
+    /// meta.json so a configured key just works with zero setup.
+    static var apiKey: String? {
+        if let manual = UserDefaults.standard.string(forKey: "ankiApiKey"), !manual.isEmpty {
+            return manual
+        }
+        let metaPath = NSHomeDirectory()
+            + "/Library/Application Support/Anki2/addons21/2055492159/meta.json"
+        guard let data = FileManager.default.contents(atPath: metaPath),
+              let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let config = obj["config"] as? [String: Any],
+              let key = config["apiKey"] as? String, !key.isEmpty else { return nil }
+        return key
+    }
+
+    /// Quick availability probe for the settings screen.
+    static func probe() -> String {
+        do {
+            let version = try invoke("version")
+            return "已连接（AnkiConnect v\(version.map { "\($0)" } ?? "?")）"
+        } catch {
+            return error.localizedDescription
+        }
+    }
+
     private static func invoke(_ action: String, _ params: [String: Any] = [:]) throws -> Any? {
         var request = URLRequest(url: URL(string: "http://127.0.0.1:8765")!)
         request.httpMethod = "POST"
         request.timeoutInterval = 5
-        request.httpBody = try JSONSerialization.data(withJSONObject: [
-            "action": action, "version": 6, "params": params,
-        ])
+        var body: [String: Any] = ["action": action, "version": 6, "params": params]
+        if let apiKey { body["key"] = apiKey }
+        request.httpBody = try JSONSerialization.data(withJSONObject: body)
 
         let semaphore = DispatchSemaphore(value: 0)
         var result: Result<Any?, Error> = .failure(AnkiError(message: "无响应"))

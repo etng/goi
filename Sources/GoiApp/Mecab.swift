@@ -5,10 +5,16 @@ import Foundation
 /// takes to light this up. Absent mecab, Japanese lemma fallback is
 /// simply unavailable (reported in the dictionary report).
 enum Mecab {
-    static let path: String? = ["/opt/homebrew/bin/mecab", "/usr/local/bin/mecab", "/usr/bin/mecab"]
-        .first { FileManager.default.isExecutableFile(atPath: $0) }
+    /// Computed on each use so `brew install mecab` takes effect without
+    /// relaunching (and the settings screen can re-detect on demand).
+    static var path: String? {
+        ["/opt/homebrew/bin/mecab", "/usr/local/bin/mecab", "/usr/bin/mecab"]
+            .first { FileManager.default.isExecutableFile(atPath: $0) }
+    }
 
     static var isAvailable: Bool { path != nil }
+
+    static let installCommand = "brew install mecab mecab-ipadic"
 
     /// Dictionary base forms for an inflected word/phrase, best first.
     /// IPADIC feature CSV: pos,pos2,pos3,pos4,conj_type,conj_form,base,reading,pron

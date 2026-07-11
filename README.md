@@ -23,6 +23,23 @@ AnkiConnect.
   via AnkiConnect; review results flow back to adjust familiarity. Full
   JSON/CSV import & export as well.
 
+## Acknowledgements
+
+- **minilzo** (Markus F.X.J. Oberhumer, GPL-2.0-or-later) — the LZO1X block
+  decompressor in MdictKit is a Swift port of its algorithm.
+- **readmdict / js-mdict** — reverse-engineering documentation of the MDict
+  (MDX/MDD) container format. No code included.
+- **RIPEMD-128** — implemented from the public COSIC specification, used for
+  encrypted MDX key indexes.
+- Optional runtime integrations (not bundled): **mecab + IPADIC** for Japanese
+  deconjugation, **Anki + AnkiConnect** for spaced-repetition sync.
+
+## Support the project
+
+If Goi is useful to you, consider buying the author a coffee — donation QR
+codes live in [`assets/donate/`](assets/donate/) and show up on the app's
+About page. A donor wall is planned.
+
 ## License
 
 [GPLv3](LICENSE).

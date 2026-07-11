@@ -1,8 +1,34 @@
 import SwiftUI
+import UniformTypeIdentifiers
 import WebKit
 
 extension Notification.Name {
     static let goiPanelShown = Notification.Name("goi.panel.shown")
+}
+
+enum PanelSection: String, CaseIterable {
+    case search
+    case wordbook
+    case settings
+    case about
+
+    var icon: String {
+        switch self {
+        case .search: return "magnifyingglass"
+        case .wordbook: return "star"
+        case .settings: return "gearshape"
+        case .about: return "info.circle"
+        }
+    }
+
+    var label: String {
+        switch self {
+        case .search: return "查词"
+        case .wordbook: return "生词本"
+        case .settings: return "设置"
+        case .about: return "关于"
+        }
+    }
 }
 
 struct DictTab: Identifiable, Equatable {
@@ -14,10 +40,12 @@ struct DictTab: Identifiable, Equatable {
 final class SearchViewModel: ObservableObject {
     let store: DictionaryStore
     let vocab: VocabStore
+    @Published var section: PanelSection = .search
     @Published var query = ""
     @Published var suggestions: [String] = []
     @Published var tabs: [DictTab] = []
     @Published var selectedTab = ""          // dictionary id, "" = 全部
+    @Published var defaultTab: String? = UserDefaults.standard.string(forKey: "defaultTabID")
     @Published var inWordbook = false
     @Published private(set) var html: String
     private(set) var htmlVersion = 0
@@ -106,8 +134,18 @@ final class SearchViewModel: ObservableObject {
 
     private func render(_ result: DictionaryStore.SearchResult) {
         lastResult = result
-        if selectedTab != "", !result.sections.contains(where: { $0.dict.id == selectedTab }) {
-            selectedTab = "" // selected dictionary has no hits for this query
+        let hitIDs = Set(result.sections.map(\.dict.id))
+        // selection priority: current tab if it still hits, then the user's
+        // default tab, then the first dictionary (in display order) with a
+        // hit; 全部 only when nothing matched anywhere.
+        if selectedTab != "", hitIDs.contains(selectedTab) {
+            // keep
+        } else if let preferred = defaultTab, hitIDs.contains(preferred) {
+            selectedTab = preferred
+        } else if let first = store.dictionaries.first(where: { hitIDs.contains($0.id) }) {
+            selectedTab = first.id
+        } else {
+            selectedTab = ""
         }
         rebuildTabs()
         renderCurrent()
@@ -118,7 +156,24 @@ final class SearchViewModel: ObservableObject {
         renderCurrent()
     }
 
-    /// Re-apply after the user reorders dictionaries in settings.
+    func setDefaultTab(_ id: String?) {
+        defaultTab = id
+        UserDefaults.standard.set(id, forKey: "defaultTabID")
+    }
+
+    /// Reorder by dragging a tab over another one.
+    func moveTab(draggingID: String, over targetID: String) {
+        guard draggingID != targetID, targetID != "", draggingID != "",
+              let from = store.dictionaries.firstIndex(where: { $0.id == draggingID }),
+              let to = store.dictionaries.firstIndex(where: { $0.id == targetID }) else { return }
+        store.moveDictionaries(
+            fromOffsets: IndexSet(integer: from),
+            toOffset: to > from ? to + 1 : to
+        )
+        orderChanged()
+    }
+
+    /// Re-apply after the dictionary order changes.
     func orderChanged() {
         guard let q = lastResult?.query, !q.isEmpty else {
             rebuildTabs()
@@ -183,6 +238,57 @@ final class SearchViewModel: ObservableObject {
     }
 }
 
+// MARK: - Root layout: left ribbon + section content
+
+struct RootView: View {
+    @ObservedObject var model: SearchViewModel
+
+    var body: some View {
+        HStack(spacing: 0) {
+            VStack(spacing: 6) {
+                ForEach(PanelSection.allCases, id: \.self) { section in
+                    Button {
+                        model.section = section
+                    } label: {
+                        VStack(spacing: 3) {
+                            Image(systemName: section.icon).font(.system(size: 16))
+                            Text(section.label).font(.system(size: 9))
+                        }
+                        .frame(width: 44, height: 44)
+                        .background(
+                            model.section == section ? Color.accentColor.opacity(0.16) : .clear,
+                            in: RoundedRectangle(cornerRadius: 8)
+                        )
+                        .foregroundColor(model.section == section ? .accentColor : .secondary)
+                        .contentShape(RoundedRectangle(cornerRadius: 8))
+                    }
+                    .buttonStyle(.plain)
+                    .help(section.label)
+                }
+                Spacer()
+            }
+            .padding(.vertical, 10)
+            .padding(.horizontal, 5)
+
+            Divider()
+
+            switch model.section {
+            case .search:
+                SearchView(model: model)
+            case .wordbook:
+                WordbookView(vocab: model.vocab, store: model.store)
+            case .settings:
+                SettingsView(store: model.store) { [weak model] in model?.orderChanged() }
+            case .about:
+                AboutView()
+            }
+        }
+        .frame(width: 800, height: 600)
+    }
+}
+
+// MARK: - Search section
+
 struct SearchView: View {
     @ObservedObject var model: SearchViewModel
     @FocusState private var focused: Bool
@@ -216,44 +322,7 @@ struct SearchView: View {
             Divider()
 
             if !model.tabs.isEmpty {
-                ScrollView(.horizontal, showsIndicators: false) {
-                    HStack(spacing: 5) {
-                        ForEach(model.tabs) { tab in
-                            let unavailable = tab.hits == 0 && tab.id != ""
-                            Button {
-                                model.selectTab(tab.id)
-                            } label: {
-                                HStack(spacing: 4) {
-                                    Text(tab.title)
-                                        .lineLimit(1)
-                                        .truncationMode(.tail)
-                                        .frame(maxWidth: 150)
-                                    if tab.hits > 0 {
-                                        Text("\(tab.hits)")
-                                            .font(.system(size: 10))
-                                            .foregroundColor(.secondary)
-                                    }
-                                }
-                                .font(.system(size: 12, weight: model.selectedTab == tab.id ? .semibold : .regular))
-                                .padding(.horizontal, 10)
-                                .padding(.vertical, 5)
-                                .background(
-                                    model.selectedTab == tab.id ? Color.accentColor.opacity(0.16) : Color.clear,
-                                    in: Capsule()
-                                )
-                                .foregroundColor(
-                                    unavailable ? Color.secondary.opacity(0.4)
-                                        : (model.selectedTab == tab.id ? .accentColor : .primary)
-                                )
-                                .contentShape(Capsule())
-                            }
-                            .buttonStyle(.plain)
-                            .disabled(unavailable)
-                        }
-                    }
-                    .padding(.horizontal, 10)
-                    .padding(.vertical, 6)
-                }
+                TabStrip(model: model)
                 Divider()
             }
 
@@ -262,7 +331,7 @@ struct SearchView: View {
                     VStack(alignment: .leading, spacing: 0) {
                         ForEach(model.suggestions, id: \.self) { suggestion in
                             Button {
-                                model.search(suggestion)
+                                model.search(suggestion, source: "suggestion")
                             } label: {
                                 HStack {
                                     Text(suggestion).font(.system(size: 14))
@@ -283,13 +352,116 @@ struct SearchView: View {
 
             ResultsWebView(model: model)
         }
-        .frame(width: 720, height: 600)
         .onReceive(NotificationCenter.default.publisher(for: .goiPanelShown)) { _ in
             focused = true
         }
         .onChange(of: model.query) { _ in model.queryChanged() }
     }
 }
+
+// MARK: - Dictionary tabs (click to filter, drag to reorder, right-click for default)
+
+struct TabStrip: View {
+    @ObservedObject var model: SearchViewModel
+    @State private var dragging: String?
+
+    var body: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 5) {
+                ForEach(model.tabs) { tab in
+                    tabView(tab)
+                }
+            }
+            .padding(.horizontal, 10)
+            .padding(.vertical, 6)
+        }
+        .onDrop(of: [.text], isTargeted: nil) { _ in
+            dragging = nil
+            return true
+        }
+    }
+
+    @ViewBuilder
+    private func tabView(_ tab: DictTab) -> some View {
+        let unavailable = tab.hits == 0 && tab.id != ""
+        let selected = model.selectedTab == tab.id
+        let isDefault = model.defaultTab == tab.id && tab.id != ""
+
+        let label = HStack(spacing: 4) {
+            if isDefault {
+                Image(systemName: "pin.fill")
+                    .font(.system(size: 8))
+                    .foregroundColor(.secondary)
+            }
+            Text(tab.title)
+                .lineLimit(1)
+                .truncationMode(.tail)
+                .frame(maxWidth: 150)
+            if tab.hits > 0 {
+                Text("\(tab.hits)")
+                    .font(.system(size: 10))
+                    .foregroundColor(.secondary)
+            }
+        }
+        .font(.system(size: 12, weight: selected ? .semibold : .regular))
+        .padding(.horizontal, 10)
+        .padding(.vertical, 5)
+        .background(selected ? Color.accentColor.opacity(0.16) : Color.clear, in: Capsule())
+        .foregroundColor(
+            unavailable ? Color.secondary.opacity(0.4) : (selected ? .accentColor : .primary)
+        )
+        .contentShape(Capsule())
+        .opacity(dragging == tab.id ? 0.35 : 1)
+        .onTapGesture {
+            if !unavailable { model.selectTab(tab.id) }
+        }
+
+        if tab.id == "" {
+            label
+        } else {
+            label
+                .onDrag {
+                    dragging = tab.id
+                    return NSItemProvider(object: tab.id as NSString)
+                }
+                .onDrop(of: [.text], delegate: TabDropDelegate(
+                    target: tab.id, dragging: $dragging, model: model
+                ))
+                .contextMenu {
+                    if isDefault {
+                        Button("取消默认词典") { model.setDefaultTab(nil) }
+                    } else {
+                        Button("设为默认词典") { model.setDefaultTab(tab.id) }
+                    }
+                    Button("排到最前") {
+                        model.moveTab(draggingID: tab.id, over: model.store.dictionaries.first?.id ?? tab.id)
+                    }
+                }
+        }
+    }
+}
+
+private struct TabDropDelegate: DropDelegate {
+    let target: String
+    @Binding var dragging: String?
+    let model: SearchViewModel
+
+    func dropEntered(info: DropInfo) {
+        guard let dragging, dragging != target else { return }
+        model.moveTab(draggingID: dragging, over: target)
+    }
+
+    func dropUpdated(info: DropInfo) -> DropProposal? {
+        DropProposal(operation: .move)
+    }
+
+    func performDrop(info: DropInfo) -> Bool {
+        dragging = nil
+        return true
+    }
+}
+
+// MARK: - Results web view
 
 struct ResultsWebView: NSViewRepresentable {
     @ObservedObject var model: SearchViewModel
@@ -313,7 +485,7 @@ struct ResultsWebView: NSViewRepresentable {
             config.setURLSchemeHandler(GoiSchemeHandler(store: model.store), forURLScheme: "goi")
             config.userContentController.add(WeakMessageHandler(self), name: "goi")
             let webView = WKWebView(frame: .zero, configuration: config)
-            webView.setValue(false, forKey: "drawsBackground") // let SwiftUI background show through
+            webView.setValue(false, forKey: "drawsBackground")
             return webView
         }()
 

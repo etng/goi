@@ -4,9 +4,12 @@ import SwiftUI
 /// Spotlight-style floating panel. Non-activating so it can take keystrokes
 /// without stealing focus from the frontmost app.
 final class SearchPanel: NSPanel {
+    private let model: SearchViewModel
+
     init(model: SearchViewModel) {
+        self.model = model
         super.init(
-            contentRect: NSRect(x: 0, y: 0, width: 720, height: 600),
+            contentRect: NSRect(x: 0, y: 0, width: 800, height: 600),
             styleMask: [.titled, .fullSizeContentView, .nonactivatingPanel],
             backing: .buffered,
             defer: false
@@ -20,7 +23,7 @@ final class SearchPanel: NSPanel {
         isReleasedWhenClosed = false
         level = .floating
         collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
-        contentView = NSHostingView(rootView: SearchView(model: model))
+        contentView = NSHostingView(rootView: RootView(model: model))
     }
 
     override var canBecomeKey: Bool { true }
@@ -31,6 +34,11 @@ final class SearchPanel: NSPanel {
         } else {
             show()
         }
+    }
+
+    func show(section: PanelSection) {
+        model.section = section
+        show()
     }
 
     func show() {
