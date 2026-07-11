@@ -9,10 +9,10 @@
 
 ## 安装
 
-从 [最新发布](https://github.com/etng/goi/releases/latest) 下载 `Goi.zip`，解压后
-把 `Goi.app` 拖入「应用程序」。构建为 ad-hoc 签名，首次打开若被拦截：右键 → 打开，
-或到「系统设置 → 隐私与安全性」中允许。应用会自动检查 GitHub 更新，也可在「关于」
-页手动检查。
+从 [最新发布](https://github.com/etng/goi/releases/latest) 下载 `Goi.dmg`（通用版，
+Apple 芯片和 Intel 都可用），双击打开后把 Goi 拖入「应用程序」。因为没有购买苹果签名，
+首次打开会被拦截，到「系统设置 → 隐私与安全性」点「仍要打开」即可（只需一次，
+[带图步骤见手册](https://etng.github.io/goi/guide/install)）。
 
 ## 功能
 

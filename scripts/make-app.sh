@@ -7,7 +7,15 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
-swift build -c release --product GoiApp
+# release builds are universal (Apple Silicon + Intel) so one download runs
+# everywhere; dev builds stay single-arch for speed
+if [[ "${RELEASE:-0}" == "1" ]]; then
+  swift build -c release --product GoiApp --arch arm64 --arch x86_64
+  BUILT_BIN=".build/apple/Products/Release/GoiApp"
+else
+  swift build -c release --product GoiApp
+  BUILT_BIN=".build/release/GoiApp"
+fi
 VERSION="$(tr -d '[:space:]' < VERSION)"
 
 if [[ "${RELEASE:-0}" == "1" ]]; then
@@ -43,7 +51,7 @@ cat > "$APP/Contents/Info.plist" <<PLIST
 </plist>
 PLIST
 
-cp .build/release/GoiApp "$APP/Contents/MacOS/GoiApp"
+cp "$BUILT_BIN" "$APP/Contents/MacOS/GoiApp"
 
 # app icon + in-app ribbon logo
 mkdir -p "$APP/Contents/Resources"

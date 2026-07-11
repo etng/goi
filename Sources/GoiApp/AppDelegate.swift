@@ -169,8 +169,28 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             statusItem.button?.performClick(nil)
             statusItem.menu = nil // restore left-click behavior
         } else {
-            panel.toggle()
+            if panel.isVisible {
+                panel.hide()
+            } else {
+                panel.show()
+                // if the clipboard holds a single word, look it up right away
+                if let word = Self.clipboardWord() {
+                    panel.show(section: .search)
+                    model.search(word, source: "clipboard")
+                }
+            }
         }
+    }
+
+    /// The clipboard text if it looks like a word worth auto-looking-up:
+    /// non-empty, single line, short, at most a few spaces (so a copied
+    /// paragraph won't trigger a lookup).
+    private static func clipboardWord() -> String? {
+        guard let raw = NSPasteboard.general.string(forType: .string) else { return nil }
+        let text = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !text.isEmpty, !text.contains("\n"), text.count <= 32 else { return nil }
+        guard text.filter({ $0 == " " }).count <= 3 else { return nil }
+        return text
     }
 
     private func buildMenu() -> NSMenu {

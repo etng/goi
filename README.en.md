@@ -11,11 +11,12 @@ AnkiConnect.
 
 ## Install
 
-Download `Goi.zip` from the [latest release](https://github.com/etng/goi/releases/latest),
-unzip, and drag `Goi.app` into Applications. The build is ad-hoc signed, so on
-first launch right-click → Open (or allow it in System Settings → Privacy &
-Security). The app checks GitHub for updates and can also be checked manually
-from its About page.
+Download `Goi.dmg` (universal — Apple Silicon and Intel) from the
+[latest release](https://github.com/etng/goi/releases/latest), open it, and drag
+Goi into Applications. The build isn't paid-signed, so the first launch is
+blocked — go to System Settings → Privacy & Security and click "Open Anyway"
+(once). The app checks GitHub for updates and can also be checked from its
+About page.
 
 ## Features
 
