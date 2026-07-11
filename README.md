@@ -25,4 +25,4 @@ AnkiConnect.
 
 ## License
 
-TBD.
+[GPLv3](LICENSE).
