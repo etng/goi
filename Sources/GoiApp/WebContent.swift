@@ -106,6 +106,14 @@ enum EntryHTML {
            a screenful of blank space */
         html, body { height: auto !important; min-height: 0 !important; }
         body { margin: 8px 12px; font-family: -apple-system; background: #fff; }
+        /* dark mode: invert the whole document (handles arbitrary per-dict
+           CSS), then re-invert media so images/photos look right */
+        @media (prefers-color-scheme: dark) {
+            html { filter: invert(0.92) hue-rotate(180deg); background: #1c1c1e; }
+            img, video, svg, canvas, [style*="background-image"] {
+                filter: invert(1) hue-rotate(180deg);
+            }
+        }
         </style>
         <script>
         const DICT_ID = "\(dict.id)";
@@ -181,6 +189,14 @@ enum EntryHTML {
         #toast { position: fixed; left: 50%; bottom: 18px; transform: translateX(-50%);
                  background: rgba(40,40,40,.92); color: #fff; padding: 7px 16px;
                  border-radius: 16px; font-size: 12px; display: none; z-index: 9; }
+        @media (prefers-color-scheme: dark) {
+            body { background: #1c1c1e; }
+            .banner { background: #3a3320; border-color: #5c5330; color: #e8dca0; }
+            .empty { color: #888; }
+            details { background: #2c2c2e; border-color: #3a3a3c; }
+            summary { background: #363638; color: #e5e5e7; }
+            iframe { background: #1c1c1e; }
+        }
         </style>
         <script>
         function goiToast(msg) {

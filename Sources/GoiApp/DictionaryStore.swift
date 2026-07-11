@@ -39,6 +39,17 @@ final class LoadedDictionary {
         self.displayTitle = self.title
     }
 
+    /// Cover image shipped alongside the dictionary (`<stem>.png/.jpg`), used
+    /// as an icon. nil when the dictionary has none.
+    lazy var iconURL: URL? = {
+        let stem = mdx.url.deletingPathExtension().lastPathComponent
+        for ext in ["png", "jpg", "jpeg"] {
+            let candidate = folder.appendingPathComponent("\(stem).\(ext)")
+            if FileManager.default.fileExists(atPath: candidate.path) { return candidate }
+        }
+        return nil
+    }()
+
     /// Headword lookup — via the on-disk index if present (headwords may have
     /// been released from RAM), otherwise MdictFile's in-memory table.
     func lookup(_ word: String) -> [Int] {

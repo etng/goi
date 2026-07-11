@@ -363,7 +363,7 @@ struct RootView: View {
                     model?.orderChanged()
                 }
             case .settings:
-                SettingsView(store: model.store) { [weak model] in model?.orderChanged() }
+                SettingsView(store: model.store, vocab: model.vocab) { [weak model] in model?.orderChanged() }
             case .about:
                 AboutView()
             }
@@ -371,19 +371,15 @@ struct RootView: View {
     }
 }
 
-/// Title-bar strip: the window's drag handle. Double-click zooms, matching
-/// the standard title-bar behaviour. Shows the current section label and a
-/// transient loading note only while dictionaries are still coming up.
+/// Minimal title strip: just clears the traffic lights and acts as the drag
+/// handle (double-click to zoom). No label — the ribbon already shows which
+/// section is active. Kept slim so it costs almost no vertical space.
 struct HeaderBar: View {
     @ObservedObject var model: SearchViewModel
 
     var body: some View {
         HStack(spacing: 8) {
-            Spacer().frame(width: 62) // clear the traffic-light buttons
-            Text(model.section.label)
-                .font(.system(size: 12, weight: .medium))
-                .foregroundColor(.secondary)
-            Spacer()
+            Spacer(minLength: 0)
             if !model.store.isReady {
                 Text("正在加载词典…")
                     .font(.system(size: 11))
@@ -391,21 +387,39 @@ struct HeaderBar: View {
             }
         }
         .padding(.horizontal, 12)
-        .frame(height: 34)
+        .frame(height: 26)
         .contentShape(Rectangle())
         .background(WindowDragArea())
     }
 }
 
-/// Lets the header act as the window drag region, with double-click-to-zoom.
+/// Lets the strip act as the window drag region, with double-click-to-zoom.
+/// A double-click's first mouseDown (clickCount 1) must NOT enter performDrag
+/// or it swallows the second click — so we defer the drag until the mouse
+/// actually moves.
 private struct WindowDragArea: NSViewRepresentable {
     final class DragView: NSView {
         override func mouseDown(with event: NSEvent) {
-            if event.clickCount == 2 {
-                window?.zoom(nil)
-            } else {
-                window?.performDrag(with: event)
+            if event.clickCount >= 2 {
+                (window as? SearchPanel)?.toggleZoom()
+                return
             }
+            // wait for movement before treating it as a drag, so a
+            // double-click's first click doesn't block the second
+            guard let window else { return }
+            var moved = false
+            window.trackEvents(matching: [.leftMouseDragged, .leftMouseUp], timeout: .infinity, mode: .eventTracking) { next, stop in
+                switch next?.type {
+                case .leftMouseDragged:
+                    moved = true
+                    stop.pointee = true
+                case .leftMouseUp:
+                    stop.pointee = true
+                default:
+                    break
+                }
+            }
+            if moved { window.performDrag(with: event) }
         }
     }
 
@@ -744,15 +758,19 @@ struct ResultsWebView: NSViewRepresentable {
                 guard let dictID = body["dict"] as? String,
                       let path = body["path"] as? String,
                       let dict = model.store.dictionary(id: dictID) else { return }
+                let ext = (path as NSString).pathExtension.lowercased()
                 DispatchQueue.global(qos: .userInitiated).async { [weak self] in
                     let data = dict.resource(path: path)
+                    let result = data.map { AudioPlayer.shared.play($0, ext: ext) } ?? .failed
                     DispatchQueue.main.async {
-                        let played = data.map { AudioPlayer.shared.play($0) } ?? false
-                        if !played {
-                            let ext = (path as NSString).pathExtension.lowercased()
-                            let reason = data == nil ? "找不到音频资源" : "暂不支持的音频格式：\(ext)"
-                            self?.webView.evaluateJavaScript("goiToast(\"\(reason)\")")
+                        let reason: String?
+                        switch result {
+                        case .played: reason = nil
+                        case .failed: reason = data == nil ? "找不到音频资源" : "音频解码失败"
+                        case .unsupported(let e):
+                            reason = "\(e) 音频需要解码器：\(AudioPlayer.decoderInstallHint)"
                         }
+                        if let reason { self?.webView.evaluateJavaScript("goiToast(\"\(reason)\")") }
                     }
                 }
             default:

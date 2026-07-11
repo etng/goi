@@ -30,6 +30,22 @@ final class SearchPanel: NSPanel {
 
     override var canBecomeKey: Bool { true }
 
+    private var preZoomFrame: NSRect?
+
+    /// Manual maximize/restore. NSPanel's built-in zoom is unreliable with a
+    /// hidden titlebar, so we toggle against the screen's visible frame.
+    func toggleZoom() {
+        guard let visible = (screen ?? NSScreen.main)?.visibleFrame else { return }
+        if frame == visible {
+            setFrame(preZoomFrame ?? NSRect(x: visible.midX - 400, y: visible.midY - 300, width: 800, height: 600),
+                     display: true, animate: true)
+            preZoomFrame = nil
+        } else {
+            preZoomFrame = frame
+            setFrame(visible, display: true, animate: true)
+        }
+    }
+
     func toggle() {
         if isVisible {
             orderOut(nil)

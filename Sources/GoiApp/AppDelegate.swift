@@ -13,6 +13,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.accessory)
+        AppTheme.applySaved()
         installMainMenu()
 
         vocab = VocabStore(url: DictionaryStore.supportDirectory.appendingPathComponent("vocab.sqlite3"))

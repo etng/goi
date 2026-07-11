@@ -331,16 +331,22 @@ extension Notification.Name {
 
 struct SettingsView: View {
     let store: DictionaryStore
+    let vocab: VocabStore
     var onReorder: () -> Void
     @State private var items: [Row] = []
     @State private var mecabPath: String? = Mecab.path
     @State private var ankiStatus = "未检测"
     @State private var copied = false
+    @State private var theme = AppTheme.current
 
     struct Row: Identifiable {
         let id: String
-        let title: String
+        let title: String          // display name (alias if set, else original)
+        let original: String
+        let hasAlias: Bool
         let entries: Int
+        let iconURL: URL?
+        let uses: Int
     }
 
     @State private var importing = false
@@ -372,6 +378,23 @@ struct SettingsView: View {
                     }
                     .disabled(importing)
                 }
+            }
+            .padding(12)
+
+            Divider()
+
+            // ---- appearance ----
+            HStack {
+                Text("外观").font(.headline)
+                Spacer()
+                Picker("", selection: $theme) {
+                    Text("跟随系统").tag(AppTheme.system)
+                    Text("浅色").tag(AppTheme.light)
+                    Text("深色").tag(AppTheme.dark)
+                }
+                .pickerStyle(.segmented)
+                .fixedSize()
+                .onChange(of: theme) { AppTheme.apply($0) }
             }
             .padding(12)
 
@@ -435,20 +458,36 @@ struct SettingsView: View {
             .padding([.top, .horizontal], 12)
             List {
                 ForEach(items) { row in
-                    HStack {
+                    HStack(spacing: 8) {
                         Image(systemName: "line.3.horizontal")
                             .foregroundColor(.secondary.opacity(0.5))
-                        AliasField(row: row, store: store, onChanged: onReorder)
+                        DictIcon(url: row.iconURL)
+                        VStack(alignment: .leading, spacing: 1) {
+                            AliasField(row: row, store: store, onChanged: reloadAndNotify)
+                            if row.hasAlias {
+                                Text("原名 \(row.original)")
+                                    .font(.system(size: 10))
+                                    .foregroundColor(.secondary)
+                                    .lineLimit(1)
+                            }
+                        }
                         Spacer()
-                        Text("\(row.entries) 词条")
-                            .font(.system(size: 11))
-                            .foregroundColor(.secondary)
+                        VStack(alignment: .trailing, spacing: 1) {
+                            Text(row.uses > 0 ? "用过 \(row.uses) 次" : "未使用")
+                                .font(.system(size: 11))
+                                .foregroundColor(row.uses > 0 ? .secondary : .secondary.opacity(0.5))
+                            Text("\(row.entries) 词条")
+                                .font(.system(size: 10))
+                                .foregroundColor(.secondary.opacity(0.7))
+                        }
                     }
                     .contextMenu {
-                        Button("恢复原名") {
-                            store.setAlias("", for: row.id)
-                            reload()
-                            onReorder()
+                        Button("修改别名…") { AliasEditor.open(row: row, store: store, onChanged: reloadAndNotify) }
+                        if row.hasAlias {
+                            Button("恢复原名") {
+                                store.setAlias("", for: row.id)
+                                reloadAndNotify()
+                            }
                         }
                         Divider()
                         Button("从库中移除…", role: .destructive) {
@@ -463,7 +502,7 @@ struct SettingsView: View {
                 }
             }
             .listStyle(.inset)
-            Text("点铅笔改短别名（tab 显示用）；右键「从库中移除」只删 App 的克隆并释放引用，你的原始词典文件不受影响。")
+            Text("双击名称改短别名（tab 显示用）；「用过 N 次」= 你主动点该词典 tab 的次数，可据此排序取舍。右键「从库中移除」只删 App 的克隆并释放引用，原始词典文件不受影响。")
                 .font(.system(size: 10))
                 .foregroundColor(.secondary)
                 .padding([.horizontal, .bottom], 12)
@@ -529,9 +568,58 @@ struct SettingsView: View {
         }
     }
 
+    private func reloadAndNotify() {
+        reload()
+        onReorder()
+    }
+
     private func reload() {
+        let uses = Dictionary(uniqueKeysWithValues: vocab.dictStats().map { ($0.dictID, $0.uses) })
         items = store.dictionaries.map {
-            Row(id: $0.id, title: $0.displayTitle, entries: $0.mdx.entryCount)
+            Row(
+                id: $0.id, title: $0.displayTitle, original: $0.title,
+                hasAlias: $0.displayTitle != $0.title, entries: $0.mdx.entryCount,
+                iconURL: $0.iconURL, uses: uses[$0.id] ?? 0
+            )
+        }
+    }
+}
+
+/// Small dictionary cover thumbnail, or a book placeholder.
+struct DictIcon: View {
+    let url: URL?
+    var body: some View {
+        Group {
+            if let url, let image = NSImage(contentsOf: url) {
+                Image(nsImage: image).resizable().scaledToFill()
+            } else {
+                Image(systemName: "book.closed")
+                    .font(.system(size: 12))
+                    .foregroundColor(.secondary)
+            }
+        }
+        .frame(width: 22, height: 22)
+        .background(Color.primary.opacity(0.05))
+        .clipShape(RoundedRectangle(cornerRadius: 4))
+    }
+}
+
+/// Opens the alias popover from a context menu by posting through a shared
+/// helper (context menus can't host the popover directly).
+enum AliasEditor {
+    static func open(row: SettingsView.Row, store: DictionaryStore, onChanged: @escaping () -> Void) {
+        let alert = NSAlert()
+        alert.messageText = "词典别名"
+        alert.informativeText = "原名：\(row.original)"
+        let field = NSTextField(frame: NSRect(x: 0, y: 0, width: 260, height: 24))
+        field.stringValue = row.hasAlias ? row.title : row.original
+        alert.accessoryView = field
+        alert.addButton(withTitle: "保存")
+        alert.addButton(withTitle: "取消")
+        NSApp.activate(ignoringOtherApps: true)
+        if alert.runModal() == .alertFirstButtonReturn {
+            store.setAlias(field.stringValue, for: row.id)
+            onChanged()
         }
     }
 }
@@ -547,17 +635,19 @@ private struct AliasField: View {
 
     var body: some View {
         Text(row.title)
+            .font(.system(size: 13))
             .lineLimit(1)
             .contentShape(Rectangle())
-            .help(originalTitle == row.title ? "双击改短别名（tab 显示用）" : "原名：\(originalTitle)（双击修改别名）")
+            .help(row.hasAlias ? "原名：\(row.original)（双击修改别名）" : "双击改短别名（tab 显示用）")
             .onTapGesture(count: 2) {
-                text = row.title
+                // prefill the existing alias when set, else the original name
+                text = row.hasAlias ? row.title : row.original
                 showingEditor = true
             }
             .popover(isPresented: $showingEditor, arrowEdge: .bottom) {
                 VStack(alignment: .leading, spacing: 8) {
                     Text("词典别名").font(.system(size: 12, weight: .semibold))
-                    Text("原名：\(originalTitle)")
+                    Text("原名：\(row.original)")
                         .font(.system(size: 10)).foregroundColor(.secondary)
                         .lineLimit(2).frame(maxWidth: 260, alignment: .leading)
                     TextField("留空恢复原名", text: $text)
@@ -574,10 +664,6 @@ private struct AliasField: View {
                 .padding(12)
                 .onAppear { focused = true }
             }
-    }
-
-    private var originalTitle: String {
-        store.dictionaries.first { $0.id == row.id }?.title ?? row.title
     }
 
     private func commit() {
