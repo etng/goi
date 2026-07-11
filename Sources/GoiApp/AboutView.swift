@@ -77,6 +77,22 @@ struct AboutView: View {
                     }
                 }
 
+                // feedback / privacy
+                VStack(spacing: 8) {
+                    Text("反馈问题")
+                        .font(.system(size: 13, weight: .semibold))
+                    Text("Goi 不含任何遥测或数据监控——我们看不到你那边的任何情况。\n遇到问题，请截图并描述现象，提交到 GitHub，我们才好定位。")
+                        .font(.system(size: 12))
+                        .foregroundColor(.secondary)
+                        .multilineTextAlignment(.center)
+                        .fixedSize(horizontal: false, vertical: true)
+                    Button("提交 Bug（已带上版本号）") { reportBug() }
+                }
+                .frame(maxWidth: .infinity)
+                .padding(12)
+                .background(Color.primary.opacity(0.04), in: RoundedRectangle(cornerRadius: 10))
+                .padding(.horizontal, 20)
+
                 groupBox("捆绑的第三方组件", items: bundled)
                 groupBox("可选的运行时依赖（未捆绑）", items: runtime)
 
@@ -95,6 +111,19 @@ struct AboutView: View {
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+
+    private func reportBug() {
+        let os = ProcessInfo.processInfo.operatingSystemVersion
+        let macos = "\(os.majorVersion).\(os.minorVersion).\(os.patchVersion)"
+        var comps = URLComponents(string: "https://github.com/etng/goi/issues/new")!
+        comps.queryItems = [
+            .init(name: "template", value: "bug_report.yml"),
+            .init(name: "labels", value: "bug"),
+            .init(name: "version", value: version),
+            .init(name: "macos", value: macos),
+        ]
+        if let url = comps.url { NSWorkspace.shared.open(url) }
     }
 
     private func checkUpdate() {

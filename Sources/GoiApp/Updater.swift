@@ -67,12 +67,15 @@ enum Updater {
             }
             let version = tag.hasPrefix("v") ? String(tag.dropFirst()) : tag
             let assets = obj["assets"] as? [[String: Any]] ?? []
-            let zipURL = assets
-                .first { ($0["name"] as? String)?.hasSuffix(".zip") == true }?["browser_download_url"] as? String
+            func assetURL(_ ext: String) -> String? {
+                assets.first { ($0["name"] as? String)?.hasSuffix(ext) == true }?["browser_download_url"] as? String
+            }
+            // prefer the DMG (standard drag-to-install), fall back to the zip
+            let downloadURL = assetURL(".dmg") ?? assetURL(".zip")
             let release = Release(
                 version: version,
                 htmlURL: obj["html_url"] as? String ?? "https://github.com/\(repo)/releases",
-                downloadURL: zipURL,
+                downloadURL: downloadURL,
                 notes: obj["body"] as? String ?? ""
             )
             finish(isNewer(version, than: currentVersion) ? .available(release) : .upToDate)

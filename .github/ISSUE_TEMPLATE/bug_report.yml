@@ -1,0 +1,70 @@
+name: Bug 反馈
+description: 报告一个问题。Goi 不收集任何数据，请你手动描述现象并附截图。
+title: "[Bug] "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        感谢反馈！Goi **不含任何遥测或监控**，我们看不到你那边发生了什么，
+        所以请尽量把现象描述清楚、附上截图，这样才好定位。
+  - type: textarea
+    id: what
+    attributes:
+      label: 出了什么问题
+      description: 简单描述你遇到的现象。
+      placeholder: 例如：查某个词时窗口空白 / 点发音没声音 / 崩溃退出……
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: 复现步骤
+      description: 一步步怎么操作会出现这个问题。
+      placeholder: |
+        1. 打开查词面板
+        2. 输入「…」
+        3. 点击「…」
+        4. 看到……
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: 期望的结果
+      placeholder: 本来应该……
+    validations:
+      required: false
+  - type: textarea
+    id: screenshot
+    attributes:
+      label: 截图
+      description: 把截图直接拖进这个框即可（强烈建议附上）。
+    validations:
+      required: false
+  - type: input
+    id: version
+    attributes:
+      label: Goi 版本
+      description: 在「关于」页可以看到；从关于页的按钮提交会自动填好。
+      placeholder: 例如：0.2.1
+    validations:
+      required: true
+  - type: input
+    id: macos
+    attributes:
+      label: macOS 版本
+      placeholder: 例如：14.5
+    validations:
+      required: false
+  - type: dropdown
+    id: mecab_anki
+    attributes:
+      label: 是否装了可选组件
+      multiple: true
+      options:
+        - mecab（日语变形还原）
+        - AnkiConnect（Anki 同步）
+        - ffmpeg（部分发音）
+    validations:
+      required: false
