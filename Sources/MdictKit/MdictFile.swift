@@ -12,6 +12,9 @@ public final class MdictFile {
 
     public let url: URL
     public let header: MdictHeader
+    // hot-path copies of header flags (header attribute access is a dictionary lookup)
+    private let lowercasesKeys: Bool
+    private let stripsKeys: Bool
     public private(set) var keys: [KeyEntry] = []
 
     public var entryCount: Int { keys.count }
@@ -26,7 +29,16 @@ public final class MdictFile {
     private var totalDecompSize: UInt64 = 0
 
     private let data: Data
-    private lazy var lookupTable: [String: [Int]] = buildLookupTable()
+    private let lookupTableLock = NSLock()
+    private var _lookupTable: [String: [Int]]?
+    private var lookupTable: [String: [Int]] {
+        lookupTableLock.lock()
+        defer { lookupTableLock.unlock() }
+        if let table = _lookupTable { return table }
+        let table = buildLookupTable()
+        _lookupTable = table
+        return table
+    }
     private lazy var sortedRecordOffsets: [UInt64] = {
         var offsets = Set(keys.map(\.recordOffset))
         offsets.insert(totalDecompSize)
@@ -53,6 +65,8 @@ public final class MdictFile {
         xml = xml.trimmingCharacters(in: CharacterSet(charactersIn: "\0\u{FEFF}"))
         let isMDD = url.pathExtension.lowercased() == "mdd"
         header = try MdictHeader(xml: xml, isResource: isMDD)
+        lowercasesKeys = !header.keyCaseSensitive
+        stripsKeys = header.stripKey
 
         if header.encrypted & 1 != 0 {
             throw MdictError.unsupportedFeature("record encryption (Encrypted & 1) requires a registration code")
@@ -204,13 +218,47 @@ public final class MdictFile {
         if isResource {
             return key.lowercased().replacingOccurrences(of: "/", with: "\\")
         }
+        // fast path: keys made only of CJK-zone scalars have no case and
+        // contain none of the strippable (ASCII) characters — return as-is
+        // without allocating. This makes indexing CJK dictionaries ~free.
+        var untouched = true
+        for scalar in key.unicodeScalars where scalar.value < 0x2E80 {
+            untouched = false
+            break
+        }
+        if untouched { return key }
+        // second fast path: check whether any transform would actually apply
+        // before paying for lowercased()/filter allocations. ASCII-only case
+        // detection: non-ASCII case folding is skipped consistently on both
+        // stored keys and queries, so the table stays self-consistent.
+        var needsLower = false
+        var needsStrip = false
+        for u in key.utf8 {
+            if lowercasesKeys, u >= 65, u <= 90 { needsLower = true }
+            if stripsKeys, u < 0x80, Self.strippableASCII[Int(u)] { needsStrip = true }
+            if needsLower, needsStrip { break }
+        }
+        if !needsLower, !needsStrip { return key }
         var k = key
-        if !header.keyCaseSensitive { k = k.lowercased() }
-        if header.stripKey {
-            k = String(k.filter { !Self.strippable.contains($0) })
+        if needsLower { k = k.lowercased() }
+        if needsStrip {
+            var kept = String.UnicodeScalarView()
+            for scalar in k.unicodeScalars
+            where scalar.value >= 0x80 || !Self.strippableASCII[Int(scalar.value)] {
+                kept.append(scalar)
+            }
+            k = String(kept)
         }
         return k
     }
+
+    private static let strippableASCII: [Bool] = {
+        var table = [Bool](repeating: false, count: 128)
+        for ch in strippable {
+            if let ascii = ch.asciiValue { table[Int(ascii)] = true }
+        }
+        return table
+    }()
 
     private static let strippable = Set<Character>(
         " \t\r\n_=,.;:!?@%&#~`()[]<>{}/\\$+-*^'\"|"
@@ -227,6 +275,35 @@ public final class MdictFile {
     /// Indices into `keys` matching the given word (after normalization).
     public func lookup(_ word: String) -> [Int] {
         lookupTable[normalize(word)] ?? []
+    }
+
+    /// Builds the exact-lookup hash table now instead of on first use.
+    /// Safe to call from any thread; call once per file from a background
+    /// queue to keep the first query instant.
+    public func prepareIndex() {
+        _ = lookupTable
+    }
+
+    /// Best-effort prefix completion. Keys are stored in the order the
+    /// dictionary builder sorted them, which for well-formed MDX files is
+    /// the normalized key order — good enough for suggestions, not lookup.
+    public func suggest(prefix: String, limit: Int) -> [String] {
+        let p = normalize(prefix)
+        guard !p.isEmpty, limit > 0 else { return [] }
+        var lo = 0
+        var hi = keys.count
+        while lo < hi {
+            let mid = (lo + hi) / 2
+            if normalize(keys[mid].key) < p { lo = mid + 1 } else { hi = mid }
+        }
+        var out: [String] = []
+        var i = lo
+        while i < keys.count, out.count < limit {
+            guard normalize(keys[i].key).hasPrefix(p) else { break }
+            if out.last != keys[i].key { out.append(keys[i].key) }
+            i += 1
+        }
+        return out
     }
 
     // MARK: - Record access

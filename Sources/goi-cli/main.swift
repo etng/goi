@@ -58,14 +58,71 @@ case "keys":
     for entry in slice { print(entry.key) }
 
 case "lookup":
-    guard args.count >= 3 else { die(usage) }
-    let file = try MdictFile(url: URL(fileURLWithPath: args[1]))
-    let word = args[2]
-    let hits = file.lookup(word)
-    guard !hits.isEmpty else { die("not found: \(word)") }
-    for index in hits {
-        print("=== \(file.keys[index].key) ===")
-        print(try file.text(at: index))
+    guard args.count >= 2 else { die(usage) }
+    var isDir: ObjCBool = false
+    let firstIsFile = FileManager.default.fileExists(atPath: args[1], isDirectory: &isDir) && !isDir.boolValue
+
+    if firstIsFile {
+        guard args.count >= 3 else { die(usage) }
+        let file = try MdictFile(url: URL(fileURLWithPath: args[1]))
+        let word = args[2]
+        let hits = file.lookup(word)
+        guard !hits.isEmpty else { die("not found: \(word)") }
+        for index in hits {
+            print("=== \(file.keys[index].key) ===")
+            print(try file.text(at: index))
+        }
+    } else {
+        // no dictionary given: search every MDX under $GOI_DICTS (default ~/dicts)
+        let word = args[1]
+        let dir = ProcessInfo.processInfo.environment["GOI_DICTS"]
+            ?? (NSHomeDirectory() + "/dicts")
+        let root = URL(fileURLWithPath: (dir as NSString).expandingTildeInPath)
+        var mdxFiles: [URL] = []
+        let enumerator = FileManager.default.enumerator(at: root, includingPropertiesForKeys: [.isRegularFileKey])
+        while let item = enumerator?.nextObject() as? URL {
+            guard (try? item.resourceValues(forKeys: [.isRegularFileKey]).isRegularFile) == true else { continue }
+            if item.pathExtension.lowercased() == "mdx" { mdxFiles.append(item) }
+        }
+        mdxFiles.sort { $0.path < $1.path }
+        var outputs = [String?](repeating: nil, count: mdxFiles.count)
+        let lock = NSLock()
+        DispatchQueue.concurrentPerform(iterations: mdxFiles.count) { i in
+            autoreleasepool {
+                let url = mdxFiles[i]
+                guard let file = try? MdictFile(url: url) else { return }
+                let headerTitle = (file.header.title ?? "").trimmingCharacters(in: .whitespaces)
+                let title = headerTitle.isEmpty || headerTitle.lowercased().contains("no html")
+                    ? url.deletingPathExtension().lastPathComponent
+                    : headerTitle
+                var chunks: [String] = []
+                var printed = Set<Int>()
+                for hit in file.lookup(word) {
+                    // follow @@@LINK aliases (bounded), keep the matched headword for display
+                    var index = hit
+                    var hops = 0
+                    while hops < 5,
+                          let text = try? file.text(at: index),
+                          text.hasPrefix("@@@LINK=") {
+                        let target = text.dropFirst(8).trimmingCharacters(in: .whitespacesAndNewlines)
+                        guard let next = file.lookup(target).first else { break }
+                        index = next
+                        hops += 1
+                    }
+                    guard printed.insert(index).inserted,
+                          let text = try? file.text(at: index) else { continue }
+                    chunks.append("=== [\(title)] \(file.keys[hit].key) ===\n\(text)")
+                }
+                if !chunks.isEmpty {
+                    lock.lock()
+                    outputs[i] = chunks.joined(separator: "\n")
+                    lock.unlock()
+                }
+            }
+        }
+        let found = outputs.compactMap { $0 }
+        if found.isEmpty { die("not found in any dictionary: \(word)") }
+        print(found.joined(separator: "\n"))
     }
 
 case "extract":

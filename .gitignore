@@ -5,6 +5,9 @@
 CLAUDE.md
 .claude/
 
+# build output
+dist/
+
 # macOS / Xcode
 .DS_Store
 xcuserdata/
