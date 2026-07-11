@@ -1,0 +1,13 @@
+# private companion docs repo (goi-docs), checked out here
+.docs/
+
+# agent files live in .docs/ and are symlinked into the repo root
+CLAUDE.md
+.claude/
+
+# macOS / Xcode
+.DS_Store
+xcuserdata/
+*.xcuserstate
+.build/
+DerivedData/
