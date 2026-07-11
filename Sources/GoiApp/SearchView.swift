@@ -308,7 +308,7 @@ struct RootView: View {
             Divider()
             content
         }
-        .frame(minWidth: 760, minHeight: 480)
+        .frame(minWidth: 860, minHeight: 540)
     }
 
     private var isDev: Bool { (Bundle.main.bundleIdentifier ?? "").hasSuffix(".dev") }
@@ -395,18 +395,44 @@ struct HeaderBar: View {
     }
 }
 
-/// The title strip's drag region: drag to move, double-click to zoom. As a
-/// real (non-.background) NSView it reliably receives the clicks.
+/// The title strip's drag region: drag to move, double-click to zoom.
+///
+/// Double-click is handled by an NSClickGestureRecognizer (reliable click
+/// counting, independent of the drag tracking loop). Dragging is deferred
+/// until the mouse actually moves, so a double-click's first click doesn't
+/// start a drag that swallows the second click.
 private struct WindowDragArea: NSViewRepresentable {
     final class DragView: NSView {
         override func hitTest(_ point: NSPoint) -> NSView? { self }
 
-        override func mouseDown(with event: NSEvent) {
-            if event.clickCount == 2 {
-                (window as? SearchPanel)?.toggleZoom()
-            } else {
-                window?.performDrag(with: event)
+        override func viewDidMoveToWindow() {
+            super.viewDidMoveToWindow()
+            if gestureRecognizers.isEmpty {
+                let dbl = NSClickGestureRecognizer(target: self, action: #selector(handleDoubleClick))
+                dbl.numberOfClicksRequired = 2
+                addGestureRecognizer(dbl)
             }
+        }
+
+        @objc private func handleDoubleClick() {
+            (window as? SearchPanel)?.toggleZoom()
+        }
+
+        override func mouseDown(with event: NSEvent) {
+            guard event.clickCount == 1, let window else { return }
+            // defer the drag until the pointer moves; a stationary click (incl.
+            // the first click of a double-click) must not enter the drag loop
+            var dragged = false
+            window.trackEvents(matching: [.leftMouseDragged, .leftMouseUp],
+                               timeout: NSEvent.doubleClickInterval * 1.5,
+                               mode: .eventTracking) { next, stop in
+                switch next?.type {
+                case .leftMouseDragged: dragged = true; stop.pointee = true
+                case .leftMouseUp: stop.pointee = true
+                default: break
+                }
+            }
+            if dragged { window.performDrag(with: event) }
         }
     }
 

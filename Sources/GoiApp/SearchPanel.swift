@@ -9,7 +9,7 @@ final class SearchPanel: NSPanel {
     init(model: SearchViewModel) {
         self.model = model
         super.init(
-            contentRect: NSRect(x: 0, y: 0, width: 800, height: 600),
+            contentRect: NSRect(x: 0, y: 0, width: 1060, height: 720),
             styleMask: [.titled, .closable, .resizable, .fullSizeContentView, .nonactivatingPanel],
             backing: .buffered,
             defer: false
@@ -26,8 +26,10 @@ final class SearchPanel: NSPanel {
         level = .normal
         hidesOnDeactivate = false
         collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
-        contentMinSize = NSSize(width: 760, height: 480)
-        setFrameAutosaveName("GoiPanel")
+        contentMinSize = NSSize(width: 860, height: 540)
+        // V2 autosave key so the previous (smaller) saved size is dropped and
+        // everyone gets the wider default once
+        setFrameAutosaveName("GoiPanelV2")
         contentView = NSHostingView(rootView: RootView(model: model))
     }
 
@@ -40,7 +42,7 @@ final class SearchPanel: NSPanel {
     func toggleZoom() {
         guard let visible = (screen ?? NSScreen.main)?.visibleFrame else { return }
         if frame == visible {
-            setFrame(preZoomFrame ?? NSRect(x: visible.midX - 400, y: visible.midY - 300, width: 800, height: 600),
+            setFrame(preZoomFrame ?? NSRect(x: visible.midX - 530, y: visible.midY - 360, width: 1060, height: 720),
                      display: true, animate: true)
             preZoomFrame = nil
         } else {
@@ -64,7 +66,7 @@ final class SearchPanel: NSPanel {
 
     func show() {
         // respect the user's remembered frame; center only on first-ever open
-        let hasSavedFrame = UserDefaults.standard.string(forKey: "NSWindow Frame GoiPanel") != nil
+        let hasSavedFrame = UserDefaults.standard.string(forKey: "NSWindow Frame GoiPanelV2") != nil
         if !hasSavedFrame, let screen = NSScreen.main {
             let frame = screen.visibleFrame
             let x = frame.midX - self.frame.width / 2
