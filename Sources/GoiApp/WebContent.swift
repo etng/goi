@@ -236,7 +236,7 @@ enum EntryHTML {
         } else if failureCount > 0 {
             status = "输入即可查词<br><b>\(failureCount) 本词典暂时不可解析</b>（详见菜单栏 → 解析报告）"
         } else {
-            status = "输入即可查词 · ⌘⌥Space 划词"
+            status = "输入即可查词 · \(HotKeyStore.selection.label) 划词"
         }
         return """
         <!doctype html><html><head><meta charset="utf-8"><style>

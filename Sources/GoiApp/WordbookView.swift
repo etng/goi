@@ -1,3 +1,4 @@
+import Carbon.HIToolbox
 import SwiftUI
 import UniformTypeIdentifiers
 
@@ -327,6 +328,7 @@ struct WordbookView: View {
 
 extension Notification.Name {
     static let goiReloadRequested = Notification.Name("goi.reload.requested")
+    static let goiHotKeysChanged = Notification.Name("goi.hotkeys.changed")
 }
 
 struct SettingsView: View {
@@ -401,6 +403,20 @@ struct SettingsView: View {
 
             Divider()
 
+            // ---- keyboard shortcuts ----
+            VStack(alignment: .leading, spacing: 8) {
+                Text("快捷键").font(.headline)
+                HotKeyRow(title: "打开查词面板", which: .panel)
+                HotKeyRow(title: "划词查询选中文本", which: .selection)
+                Text("点右侧按钮后按下想用的组合键（需含 ⌘/⌥/⌃/⇧）。避免与系统快捷键冲突，例如 ⌘⌥Space 会被系统的 Finder 搜索占用。")
+                    .font(.system(size: 11))
+                    .foregroundColor(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            .padding(12)
+
+            Divider()
+
             // ---- text selection (划词取词) permission ----
             VStack(alignment: .leading, spacing: 8) {
                 Text("划词取词").font(.headline)
@@ -408,7 +424,7 @@ struct SettingsView: View {
                     Image(systemName: axTrusted ? "checkmark.circle.fill" : "exclamationmark.triangle.fill")
                         .foregroundColor(axTrusted ? .green : .orange)
                     VStack(alignment: .leading, spacing: 1) {
-                        Text("在其它应用里选中文字，按 ⌘⌥Space 直接查词").font(.system(size: 12))
+                        Text("在其它应用里选中文字，按 \(HotKeyStore.selection.label) 直接查词").font(.system(size: 12))
                         Text(axTrusted ? "已授权「辅助功能」，可以使用" : "需要「辅助功能」权限才能读取选中的文字")
                             .font(.system(size: 11))
                             .foregroundColor(.secondary)
@@ -615,6 +631,100 @@ struct SettingsView: View {
                 iconURL: $0.iconURL, uses: uses[$0.id] ?? 0
             )
         }
+    }
+}
+
+/// One shortcut row: label + current combo + a record button.
+struct HotKeyRow: View {
+    enum Which { case panel, selection }
+    let title: String
+    let which: Which
+
+    @State private var label: String = ""
+    @State private var recording = false
+
+    var body: some View {
+        HStack(spacing: 8) {
+            Image(systemName: "command").font(.system(size: 12)).foregroundColor(.secondary)
+            Text(title).font(.system(size: 12))
+            Spacer()
+            Text(recording ? "按下快捷键…" : label)
+                .font(.system(size: 12, weight: .medium, design: .rounded))
+                .foregroundColor(recording ? .accentColor : .primary)
+                .frame(minWidth: 92)
+                .padding(.vertical, 3).padding(.horizontal, 8)
+                .background(Color.primary.opacity(0.06), in: RoundedRectangle(cornerRadius: 6))
+            KeyRecorder(recording: $recording) { config in
+                switch which {
+                case .panel: HotKeyStore.panel = config
+                case .selection: HotKeyStore.selection = config
+                }
+                label = config.label
+                recording = false
+                NotificationCenter.default.post(name: .goiHotKeysChanged, object: nil)
+            }
+            .frame(width: 60, height: 24)
+            Button("恢复默认") {
+                let def = which == .panel ? HotKeyConfig.panelDefault : HotKeyConfig.selectionDefault
+                switch which {
+                case .panel: HotKeyStore.panel = def
+                case .selection: HotKeyStore.selection = def
+                }
+                label = def.label
+                NotificationCenter.default.post(name: .goiHotKeysChanged, object: nil)
+            }
+            .font(.system(size: 11))
+        }
+        .onAppear {
+            label = (which == .panel ? HotKeyStore.panel : HotKeyStore.selection).label
+        }
+    }
+}
+
+/// A button that, once clicked, captures the next modifier+key combo.
+private struct KeyRecorder: NSViewRepresentable {
+    @Binding var recording: Bool
+    let onRecord: (HotKeyConfig) -> Void
+
+    func makeNSView(context: Context) -> NSButton {
+        let button = RecorderButton()
+        button.title = "录制"
+        button.bezelStyle = .rounded
+        button.font = .systemFont(ofSize: 11)
+        button.onStart = { recording = true }
+        button.onRecord = onRecord
+        button.onCancel = { recording = false }
+        return button
+    }
+    func updateNSView(_ button: NSButton, context: Context) {
+        (button as? RecorderButton)?.title = recording ? "…" : "录制"
+    }
+
+    final class RecorderButton: NSButton {
+        var onStart: (() -> Void)?
+        var onRecord: ((HotKeyConfig) -> Void)?
+        var onCancel: (() -> Void)?
+        private var monitor: Any?
+
+        override func mouseDown(with event: NSEvent) {
+            guard monitor == nil else { return }
+            onStart?()
+            window?.makeFirstResponder(self)
+            monitor = NSEvent.addLocalMonitorForEvents(matching: [.keyDown, .flagsChanged]) { [weak self] e in
+                guard let self else { return e }
+                if e.type == .keyDown {
+                    if e.keyCode == UInt16(kVK_Escape) { self.stop(); self.onCancel?(); return nil }
+                    if let cfg = HotKeyStore.config(from: e) { self.stop(); self.onRecord?(cfg) }
+                    return nil // swallow while recording
+                }
+                return e
+            }
+        }
+        private func stop() {
+            if let monitor { NSEvent.removeMonitor(monitor) }
+            monitor = nil
+        }
+        deinit { stop() }
     }
 }
 
