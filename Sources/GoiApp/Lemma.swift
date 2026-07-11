@@ -3,12 +3,16 @@ import NaturalLanguage
 
 enum Lemma {
     /// Base-form candidates for a word that failed exact lookup, best first.
-    /// English only for now; Japanese deconjugation arrives with mecab (M4).
+    /// English via NLTagger + rules; Japanese via mecab when installed.
     static func candidates(for word: String) -> [String] {
         var out: [String] = []
         func add(_ s: String) {
             let t = s.trimmingCharacters(in: .whitespaces)
             if !t.isEmpty, t.lowercased() != word.lowercased(), !out.contains(t) { out.append(t) }
+        }
+
+        if word.unicodeScalars.contains(where: { (0x3040...0x30FF).contains($0.value) || (0x4E00...0x9FFF).contains($0.value) }) {
+            for candidate in Mecab.baseForms(of: word) { add(candidate) }
         }
 
         let tagger = NLTagger(tagSchemes: [.lemma])

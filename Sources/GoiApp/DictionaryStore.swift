@@ -124,14 +124,14 @@ final class DictionaryStore {
                 }
             }
 
-            dictionaries = loaded
+            dictionaries = Self.applySavedOrder(to: loaded)
             failures = failed
             isReady = true
             writeReport()
-            // build lookup tables up front (in parallel) so the first query is instant
+            // build MDX lookup tables up front (in parallel) so the first query
+            // is instant; MDD resource tables build lazily on first media access
             DispatchQueue.concurrentPerform(iterations: loaded.count) { i in
                 loaded[i].mdx.prepareIndex()
-                for mdd in loaded[i].resources { mdd.prepareIndex() }
             }
             completion()
         }
@@ -181,25 +181,32 @@ final class DictionaryStore {
         let query: String
         let banner: String?
         let sections: [Section]
+        /// The word the sections actually show: the query itself, or the
+        /// base form when lemma fallback kicked in. Nil when nothing matched.
+        var resolvedWord: String?
         var isEmpty: Bool { sections.isEmpty }
     }
 
     func search(_ raw: String) -> SearchResult {
         let word = raw.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !word.isEmpty else { return SearchResult(query: raw, banner: nil, sections: []) }
+        guard !word.isEmpty else {
+            return SearchResult(query: raw, banner: nil, sections: [], resolvedWord: nil)
+        }
 
         var sections = query(word)
         var banner: String?
+        var resolved: String? = sections.isEmpty ? nil : word
         if sections.isEmpty {
             for candidate in Lemma.candidates(for: word) where candidate != word {
                 sections = query(candidate)
                 if !sections.isEmpty {
                     banner = "未找到「\(word)」，已按原型「\(candidate)」查询"
+                    resolved = candidate
                     break
                 }
             }
         }
-        return SearchResult(query: word, banner: banner, sections: sections)
+        return SearchResult(query: word, banner: banner, sections: sections, resolvedWord: resolved)
     }
 
     private func query(_ word: String) -> [Section] {
@@ -242,6 +249,35 @@ final class DictionaryStore {
         dictionaries.first { $0.id == id }
     }
 
+    // MARK: - Display order
+
+    private static let orderKey = "dictionaryOrder"
+
+    /// Known dictionaries keep their saved rank; new ones append in load order.
+    private static func applySavedOrder(to loaded: [LoadedDictionary]) -> [LoadedDictionary] {
+        let saved = UserDefaults.standard.stringArray(forKey: orderKey) ?? []
+        guard !saved.isEmpty else { return loaded }
+        var rank: [String: Int] = [:]
+        for (i, id) in saved.enumerated() { rank[id] = i }
+        return loaded.enumerated()
+            .sorted { a, b in
+                let ra = rank[a.element.id] ?? saved.count + a.offset
+                let rb = rank[b.element.id] ?? saved.count + b.offset
+                return ra < rb
+            }
+            .map(\.element)
+    }
+
+    /// List-reorder semantics matching SwiftUI's onMove.
+    func moveDictionaries(fromOffsets source: IndexSet, toOffset destination: Int) {
+        var items = dictionaries
+        let moving = source.sorted(by: >).map { items.remove(at: $0) }
+        let adjusted = destination - source.count(where: { $0 < destination })
+        items.insert(contentsOf: moving.reversed(), at: adjusted)
+        dictionaries = items
+        UserDefaults.standard.set(items.map(\.id), forKey: Self.orderKey)
+    }
+
     // MARK: - Report
 
     private func writeReport() {
@@ -271,6 +307,10 @@ final class DictionaryStore {
         }
         lines.append("")
         lines.append("已知限制：MDX v3 与需注册码的加密词典（Encrypted&1）暂不支持；Speex/Ogg 音频暂不能播放。")
+        if !Mecab.isAvailable {
+            lines.append("")
+            lines.append("提示：未检测到 mecab，日语变形还原（食べました→食べる）不可用。安装即生效：`brew install mecab mecab-ipadic`。")
+        }
         try? lines.joined(separator: "\n").write(to: Self.reportURL, atomically: true, encoding: .utf8)
     }
 }

@@ -30,15 +30,10 @@ public final class MdictFile {
 
     private let data: Data
     private let lookupTableLock = NSLock()
-    private var _lookupTable: [String: [Int]]?
-    private var lookupTable: [String: [Int]] {
-        lookupTableLock.lock()
-        defer { lookupTableLock.unlock() }
-        if let table = _lookupTable { return table }
-        let table = buildLookupTable()
-        _lookupTable = table
-        return table
-    }
+    // Compact exact-lookup index: value >= 0 is a key index; value < 0 points
+    // into `collisions` at -(value+1). Avoids one heap array per headword.
+    private var _lookupTable: [String: Int]?
+    private var _collisions: [[Int]] = []
     private lazy var sortedRecordOffsets: [UInt64] = {
         var offsets = Set(keys.map(\.recordOffset))
         offsets.insert(totalDecompSize)
@@ -264,24 +259,41 @@ public final class MdictFile {
         " \t\r\n_=,.;:!?@%&#~`()[]<>{}/\\$+-*^'\"|"
     )
 
-    private func buildLookupTable() -> [String: [Int]] {
-        var table = [String: [Int]](minimumCapacity: keys.count)
+    private func ensureLookupTable() {
+        lookupTableLock.lock()
+        defer { lookupTableLock.unlock() }
+        guard _lookupTable == nil else { return }
+        var table = [String: Int](minimumCapacity: keys.count)
+        var collisions: [[Int]] = []
         for (i, entry) in keys.enumerated() {
-            table[normalize(entry.key), default: []].append(i)
+            let norm = normalize(entry.key)
+            if let existing = table[norm] {
+                if existing >= 0 {
+                    collisions.append([existing, i])
+                    table[norm] = -collisions.count
+                } else {
+                    collisions[-existing - 1].append(i)
+                }
+            } else {
+                table[norm] = i
+            }
         }
-        return table
+        _lookupTable = table
+        _collisions = collisions
     }
 
     /// Indices into `keys` matching the given word (after normalization).
     public func lookup(_ word: String) -> [Int] {
-        lookupTable[normalize(word)] ?? []
+        ensureLookupTable()
+        guard let value = _lookupTable![normalize(word)] else { return [] }
+        return value >= 0 ? [value] : _collisions[-value - 1]
     }
 
     /// Builds the exact-lookup hash table now instead of on first use.
     /// Safe to call from any thread; call once per file from a background
     /// queue to keep the first query instant.
     public func prepareIndex() {
-        _ = lookupTable
+        ensureLookupTable()
     }
 
     /// Best-effort prefix completion. Keys are stored in the order the
