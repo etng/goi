@@ -244,6 +244,15 @@ struct RootView: View {
     @ObservedObject var model: SearchViewModel
 
     var body: some View {
+        VStack(spacing: 0) {
+            HeaderBar(model: model)
+            Divider()
+            content
+        }
+        .frame(minWidth: 760, minHeight: 480)
+    }
+
+    private var content: some View {
         HStack(spacing: 0) {
             VStack(spacing: 6) {
                 ForEach(PanelSection.allCases, id: \.self) { section in
@@ -283,8 +292,51 @@ struct RootView: View {
                 AboutView()
             }
         }
-        .frame(width: 800, height: 600)
     }
+}
+
+/// Title-bar strip: identity + status, and the window's only drag handle.
+struct HeaderBar: View {
+    @ObservedObject var model: SearchViewModel
+
+    var body: some View {
+        HStack(spacing: 8) {
+            Spacer().frame(width: 62) // clear the traffic-light buttons
+            Text("語 Goi")
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundColor(.secondary)
+            Text(model.section.label)
+                .font(.system(size: 12))
+                .foregroundColor(.secondary.opacity(0.65))
+            Spacer()
+            Text(statusText)
+                .font(.system(size: 11))
+                .foregroundColor(.secondary)
+        }
+        .padding(.horizontal, 12)
+        .frame(height: 34)
+        .contentShape(Rectangle())
+        .background(WindowDragArea())
+    }
+
+    private var statusText: String {
+        if !model.store.isReady { return "正在加载词典…" }
+        var text = "\(model.store.dictionaries.count) 本词典"
+        if !model.store.failures.isEmpty { text += " · \(model.store.failures.count) 本不可解析" }
+        return text
+    }
+}
+
+/// Lets the header act as the window drag region.
+private struct WindowDragArea: NSViewRepresentable {
+    final class DragView: NSView {
+        override func mouseDown(with event: NSEvent) {
+            window?.performDrag(with: event)
+        }
+    }
+
+    func makeNSView(context: Context) -> NSView { DragView() }
+    func updateNSView(_ view: NSView, context: Context) {}
 }
 
 // MARK: - Search section

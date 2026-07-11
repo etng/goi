@@ -10,19 +10,21 @@ final class SearchPanel: NSPanel {
         self.model = model
         super.init(
             contentRect: NSRect(x: 0, y: 0, width: 800, height: 600),
-            styleMask: [.titled, .fullSizeContentView, .nonactivatingPanel],
+            styleMask: [.titled, .closable, .resizable, .fullSizeContentView, .nonactivatingPanel],
             backing: .buffered,
             defer: false
         )
         titleVisibility = .hidden
         titlebarAppearsTransparent = true
-        standardWindowButton(.closeButton)?.isHidden = true
         standardWindowButton(.miniaturizeButton)?.isHidden = true
-        standardWindowButton(.zoomButton)?.isHidden = true
-        isMovableByWindowBackground = true
+        // window dragging happens via the header bar only — background drags
+        // would swallow the tab strip's drag-to-reorder
+        isMovableByWindowBackground = false
         isReleasedWhenClosed = false
         level = .floating
         collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
+        contentMinSize = NSSize(width: 760, height: 480)
+        setFrameAutosaveName("GoiPanel")
         contentView = NSHostingView(rootView: RootView(model: model))
     }
 
@@ -42,7 +44,9 @@ final class SearchPanel: NSPanel {
     }
 
     func show() {
-        if let screen = NSScreen.main {
+        // respect the user's remembered frame; center only on first-ever open
+        let hasSavedFrame = UserDefaults.standard.string(forKey: "NSWindow Frame GoiPanel") != nil
+        if !hasSavedFrame, let screen = NSScreen.main {
             let frame = screen.visibleFrame
             let x = frame.midX - self.frame.width / 2
             let y = frame.minY + frame.height * 0.62 - self.frame.height / 2

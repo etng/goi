@@ -36,9 +36,13 @@ AnkiConnect.
 
 ## Support the project
 
-If Goi is useful to you, consider buying the author a coffee — donation QR
-codes live in [`assets/donate/`](assets/donate/) and show up on the app's
-About page. A donor wall is planned.
+If Goi is useful to you, consider buying the author a coffee — scan either
+QR code below (they also live on the app's About page). A donor wall is
+planned.
+
+| 微信支付 | 支付宝 |
+|---|---|
+| <img src="assets/donate/微信支付.png" width="220" alt="WeChat Pay"> | <img src="assets/donate/支付宝.jpg" width="220" alt="Alipay"> |
 
 ## License
 
