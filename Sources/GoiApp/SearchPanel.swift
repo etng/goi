@@ -1,54 +1,45 @@
 import AppKit
 import SwiftUI
 
-/// Spotlight-style floating panel. Non-activating so it can take keystrokes
-/// without stealing focus from the frontmost app.
+/// Spotlight-style panel with a standard (system) title bar: the traffic
+/// lights live there, and the strip to their right is the system title bar —
+/// so dragging and double-click-to-zoom are handled natively by macOS.
+/// Non-activating so summoning it doesn't steal focus from the frontmost app.
 final class SearchPanel: NSPanel {
     private let model: SearchViewModel
 
     init(model: SearchViewModel) {
         self.model = model
+        let size = Self.defaultContentSize()
         super.init(
-            contentRect: NSRect(x: 0, y: 0, width: 1060, height: 720),
-            styleMask: [.titled, .closable, .resizable, .fullSizeContentView, .nonactivatingPanel],
+            contentRect: NSRect(x: 0, y: 0, width: size.width, height: size.height),
+            styleMask: [.titled, .closable, .resizable, .nonactivatingPanel],
             backing: .buffered,
             defer: false
         )
-        titleVisibility = .hidden
-        titlebarAppearsTransparent = true
+        titleVisibility = .hidden            // no title text, keep the bar
+        title = "Goi"
         standardWindowButton(.miniaturizeButton)?.isHidden = true
-        // window dragging happens via the header bar only — background drags
-        // would swallow the tab strip's drag-to-reorder
-        isMovableByWindowBackground = false
         isReleasedWhenClosed = false
         // normal level so switching to another app sends it behind as usual
         // (⌥Space re-summons); floating would pin it permanently on top
         level = .normal
         hidesOnDeactivate = false
         collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
-        contentMinSize = NSSize(width: 860, height: 540)
-        // V2 autosave key so the previous (smaller) saved size is dropped and
-        // everyone gets the wider default once
-        setFrameAutosaveName("GoiPanelV2")
+        contentMinSize = NSSize(width: 820, height: 520)
+        setFrameAutosaveName("GoiPanelV3")   // fresh key → new dynamic default applies once
         contentView = NSHostingView(rootView: RootView(model: model))
     }
 
     override var canBecomeKey: Bool { true }
 
-    private var preZoomFrame: NSRect?
-
-    /// Manual maximize/restore. NSPanel's built-in zoom is unreliable with a
-    /// hidden titlebar, so we toggle against the screen's visible frame.
-    func toggleZoom() {
-        guard let visible = (screen ?? NSScreen.main)?.visibleFrame else { return }
-        if frame == visible {
-            setFrame(preZoomFrame ?? NSRect(x: visible.midX - 530, y: visible.midY - 360, width: 1060, height: 720),
-                     display: true, animate: true)
-            preZoomFrame = nil
-        } else {
-            preZoomFrame = frame
-            setFrame(visible, display: true, animate: true)
-        }
+    /// Comfortable default sized to the screen: wider than the content needs,
+    /// but never larger than the usable area (small screens ≈ full screen).
+    static func defaultContentSize(for screen: NSScreen? = NSScreen.main) -> NSSize {
+        guard let visible = screen?.visibleFrame else { return NSSize(width: 1060, height: 720) }
+        let width = min(max(visible.width * 0.72, 960), 1200)
+        let height = min(max(visible.height * 0.82, 620), 900)
+        return NSSize(width: min(width, visible.width), height: min(height, visible.height))
     }
 
     func toggle() {
@@ -65,13 +56,15 @@ final class SearchPanel: NSPanel {
     }
 
     func show() {
-        // respect the user's remembered frame; center only on first-ever open
-        let hasSavedFrame = UserDefaults.standard.string(forKey: "NSWindow Frame GoiPanelV2") != nil
+        // first-ever open: size to the screen and center; afterwards the
+        // autosaved frame is restored automatically
+        let hasSavedFrame = UserDefaults.standard.string(forKey: "NSWindow Frame GoiPanelV3") != nil
         if !hasSavedFrame, let screen = NSScreen.main {
-            let frame = screen.visibleFrame
-            let x = frame.midX - self.frame.width / 2
-            let y = frame.minY + frame.height * 0.62 - self.frame.height / 2
-            setFrameOrigin(NSPoint(x: x, y: y))
+            let visible = screen.visibleFrame
+            let size = Self.defaultContentSize(for: screen)
+            let origin = NSPoint(x: visible.midX - size.width / 2,
+                                 y: visible.minY + visible.height * 0.6 - size.height / 2)
+            setFrame(NSRect(origin: origin, size: size), display: false)
         }
         makeKeyAndOrderFront(nil)
         NotificationCenter.default.post(name: .goiPanelShown, object: nil)

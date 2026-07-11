@@ -303,12 +303,8 @@ struct RootView: View {
     @ObservedObject var model: SearchViewModel
 
     var body: some View {
-        VStack(spacing: 0) {
-            HeaderBar(model: model)
-            Divider()
-            content
-        }
-        .frame(minWidth: 860, minHeight: 540)
+        content
+            .frame(minWidth: 820, minHeight: 520)
     }
 
     private var isDev: Bool { (Bundle.main.bundleIdentifier ?? "").hasSuffix(".dev") }
@@ -371,74 +367,6 @@ struct RootView: View {
     }
 }
 
-/// Minimal title strip: just clears the traffic lights and acts as the drag
-/// handle (double-click to zoom). No label — the ribbon already shows which
-/// section is active. Kept slim so it costs almost no vertical space.
-struct HeaderBar: View {
-    @ObservedObject var model: SearchViewModel
-
-    var body: some View {
-        ZStack {
-            WindowDragArea()               // base layer actually receives mouse events
-            HStack {
-                Spacer(minLength: 0)
-                if !model.store.isReady {
-                    Text("正在加载词典…")
-                        .font(.system(size: 11))
-                        .foregroundColor(.secondary)
-                }
-            }
-            .padding(.horizontal, 12)
-            .allowsHitTesting(false)       // let clicks fall through to the drag view
-        }
-        .frame(height: 26)
-    }
-}
-
-/// The title strip's drag region: drag to move, double-click to zoom.
-///
-/// Double-click is handled by an NSClickGestureRecognizer (reliable click
-/// counting, independent of the drag tracking loop). Dragging is deferred
-/// until the mouse actually moves, so a double-click's first click doesn't
-/// start a drag that swallows the second click.
-private struct WindowDragArea: NSViewRepresentable {
-    final class DragView: NSView {
-        override func hitTest(_ point: NSPoint) -> NSView? { self }
-
-        override func viewDidMoveToWindow() {
-            super.viewDidMoveToWindow()
-            if gestureRecognizers.isEmpty {
-                let dbl = NSClickGestureRecognizer(target: self, action: #selector(handleDoubleClick))
-                dbl.numberOfClicksRequired = 2
-                addGestureRecognizer(dbl)
-            }
-        }
-
-        @objc private func handleDoubleClick() {
-            (window as? SearchPanel)?.toggleZoom()
-        }
-
-        override func mouseDown(with event: NSEvent) {
-            guard event.clickCount == 1, let window else { return }
-            // defer the drag until the pointer moves; a stationary click (incl.
-            // the first click of a double-click) must not enter the drag loop
-            var dragged = false
-            window.trackEvents(matching: [.leftMouseDragged, .leftMouseUp],
-                               timeout: NSEvent.doubleClickInterval * 1.5,
-                               mode: .eventTracking) { next, stop in
-                switch next?.type {
-                case .leftMouseDragged: dragged = true; stop.pointee = true
-                case .leftMouseUp: stop.pointee = true
-                default: break
-                }
-            }
-            if dragged { window.performDrag(with: event) }
-        }
-    }
-
-    func makeNSView(context: Context) -> NSView { DragView() }
-    func updateNSView(_ view: NSView, context: Context) {}
-}
 
 // MARK: - Search section
 
