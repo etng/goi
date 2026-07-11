@@ -8,6 +8,7 @@ extension Notification.Name {
 
 enum PanelSection: String, CaseIterable {
     case search
+    case history
     case wordbook
     case settings
     case about
@@ -15,6 +16,7 @@ enum PanelSection: String, CaseIterable {
     var icon: String {
         switch self {
         case .search: return "magnifyingglass"
+        case .history: return "clock"
         case .wordbook: return "star"
         case .settings: return "gearshape"
         case .about: return "info.circle"
@@ -24,6 +26,7 @@ enum PanelSection: String, CaseIterable {
     var label: String {
         switch self {
         case .search: return "查词"
+        case .history: return "历史"
         case .wordbook: return "生词本"
         case .settings: return "设置"
         case .about: return "关于"
@@ -115,8 +118,8 @@ final class SearchViewModel: ObservableObject {
             return
         }
         suggestions = []
-        render(result)
         logLookup(result, source: "typed")
+        render(result)
     }
 
     /// Programmatic search (suggestion click, entry:// link).
@@ -126,8 +129,25 @@ final class SearchViewModel: ObservableObject {
         guard store.isReady else { return }
         let result = store.search(word)
         suggestions = result.isEmpty ? store.suggestions(for: word) : []
-        render(result)
         logLookup(result, source: source)
+        render(result)
+    }
+
+    /// Jump to a word from history/wordbook — display only, no weight change.
+    func browse(_ word: String) {
+        section = .search
+        suppressLiveSearch = true
+        query = word
+        guard store.isReady else { return }
+        let result = store.search(word)
+        suggestions = result.isEmpty ? store.suggestions(for: word) : []
+        inWordbook = result.resolvedWord.map { vocab.isInWordbook(lemma: $0) } ?? false
+        render(result)
+    }
+
+    /// Re-render the current result (e.g. after a comment was added elsewhere).
+    func refreshCurrent() {
+        renderCurrent()
     }
 
     // MARK: - Tabs
@@ -197,8 +217,11 @@ final class SearchViewModel: ObservableObject {
 
     private func renderCurrent() {
         guard let result = lastResult else { return }
+        // the user's own record for this word: stats + comments
+        let info = result.resolvedWord.flatMap { vocab.info(lemma: $0) }
+        let comments = result.resolvedWord.map { vocab.comments(lemma: $0) } ?? []
         if selectedTab == "" {
-            setHTML(EntryHTML.resultsPage(result: result))
+            setHTML(EntryHTML.resultsPage(result: result, wordInfo: info, comments: comments))
         } else {
             let filtered = DictionaryStore.SearchResult(
                 query: result.query,
@@ -206,7 +229,7 @@ final class SearchViewModel: ObservableObject {
                 sections: result.sections.filter { $0.dict.id == selectedTab },
                 resolvedWord: result.resolvedWord
             )
-            setHTML(EntryHTML.resultsPage(result: filtered))
+            setHTML(EntryHTML.resultsPage(result: filtered, wordInfo: info, comments: comments))
         }
     }
 
@@ -284,8 +307,12 @@ struct RootView: View {
             switch model.section {
             case .search:
                 SearchView(model: model)
+            case .history:
+                HistoryView(vocab: model.vocab) { [weak model] word in model?.browse(word) }
             case .wordbook:
-                WordbookView(vocab: model.vocab, store: model.store)
+                WordbookView(vocab: model.vocab, store: model.store) { [weak model] word in
+                    model?.browse(word)
+                }
             case .settings:
                 SettingsView(store: model.store) { [weak model] in model?.orderChanged() }
             case .about:
@@ -553,6 +580,11 @@ struct ResultsWebView: NSViewRepresentable {
             case "entry":
                 if let word = body["word"] as? String, !word.isEmpty {
                     model.search(word)
+                }
+            case "comment":
+                if let lemma = body["lemma"] as? String,
+                   let text = body["text"] as? String {
+                    model.vocab.addComment(lemma: lemma, content: text)
                 }
             case "sound":
                 guard let dictID = body["dict"] as? String,

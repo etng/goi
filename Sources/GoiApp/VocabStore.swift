@@ -52,6 +52,13 @@ final class VocabStore {
             anki_note_id INTEGER
         );
         CREATE INDEX IF NOT EXISTS idx_log_lemma ON lookup_log(lemma);
+        CREATE TABLE IF NOT EXISTS note(
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            lemma TEXT NOT NULL,
+            content TEXT NOT NULL,
+            ts REAL NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_note_lemma ON note(lemma);
         """)
     }
 
@@ -163,6 +170,101 @@ final class VocabStore {
         row.manual ? row.familiarity : recovered(row.familiarity, since: row.lastSeen)
     }
 
+    /// Word stats for display (no side effects, no weight change).
+    func info(lemma: String) -> WordRow? {
+        queue.sync { fetchWord(lemma) }
+    }
+
+    // MARK: - History
+
+    struct LogRow: Identifiable {
+        let id: Int64
+        let surface: String
+        let lemma: String
+        let source: String
+        let ts: Date
+    }
+
+    func historyCount() -> Int {
+        queue.sync {
+            var stmt: OpaquePointer?
+            guard sqlite3_prepare_v2(db, "SELECT COUNT(*) FROM lookup_log", -1, &stmt, nil) == SQLITE_OK else { return 0 }
+            defer { sqlite3_finalize(stmt) }
+            return sqlite3_step(stmt) == SQLITE_ROW ? Int(sqlite3_column_int64(stmt, 0)) : 0
+        }
+    }
+
+    func history(offset: Int, limit: Int) -> [LogRow] {
+        queue.sync {
+            var stmt: OpaquePointer?
+            guard sqlite3_prepare_v2(
+                db, "SELECT id, surface, lemma, source, ts FROM lookup_log ORDER BY id DESC LIMIT ? OFFSET ?",
+                -1, &stmt, nil
+            ) == SQLITE_OK else { return [] }
+            defer { sqlite3_finalize(stmt) }
+            bind(stmt, [.int(Int64(limit)), .int(Int64(offset))])
+            var out: [LogRow] = []
+            while sqlite3_step(stmt) == SQLITE_ROW {
+                out.append(LogRow(
+                    id: sqlite3_column_int64(stmt, 0),
+                    surface: text(stmt, 1),
+                    lemma: text(stmt, 2),
+                    source: text(stmt, 3),
+                    ts: Date(timeIntervalSince1970: sqlite3_column_double(stmt, 4))
+                ))
+            }
+            return out
+        }
+    }
+
+    // MARK: - Notes (per-word comments; community layer comes later)
+
+    struct CommentRow: Identifiable {
+        let id: Int64
+        let content: String
+        let ts: Date
+    }
+
+    func addComment(lemma: String, content: String) {
+        let trimmed = content.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+        queue.sync {
+            run("INSERT INTO note(lemma, content, ts) VALUES(?,?,?)",
+                [.text(lemma), .text(trimmed), .real(Date().timeIntervalSince1970)])
+        }
+    }
+
+    /// Own comments, newest first.
+    func comments(lemma: String) -> [CommentRow] {
+        queue.sync {
+            var stmt: OpaquePointer?
+            guard sqlite3_prepare_v2(
+                db, "SELECT id, content, ts FROM note WHERE lemma=? ORDER BY id DESC", -1, &stmt, nil
+            ) == SQLITE_OK else { return [] }
+            defer { sqlite3_finalize(stmt) }
+            bind(stmt, [.text(lemma)])
+            var out: [CommentRow] = []
+            while sqlite3_step(stmt) == SQLITE_ROW {
+                out.append(CommentRow(
+                    id: sqlite3_column_int64(stmt, 0),
+                    content: text(stmt, 1),
+                    ts: Date(timeIntervalSince1970: sqlite3_column_double(stmt, 2))
+                ))
+            }
+            return out
+        }
+    }
+
+    func commentCount(lemma: String) -> Int {
+        queue.sync {
+            var stmt: OpaquePointer?
+            guard sqlite3_prepare_v2(db, "SELECT COUNT(*) FROM note WHERE lemma=?", -1, &stmt, nil) == SQLITE_OK else { return 0 }
+            defer { sqlite3_finalize(stmt) }
+            bind(stmt, [.text(lemma)])
+            return sqlite3_step(stmt) == SQLITE_ROW ? Int(sqlite3_column_int64(stmt, 0)) : 0
+        }
+    }
+
     // MARK: - Export / import
 
     func exportJSON() -> Data? {
@@ -192,8 +294,21 @@ final class VocabStore {
             }
             return out
         }
+        let notes: [[String: Any]] = queue.sync {
+            var out: [[String: Any]] = []
+            var stmt: OpaquePointer?
+            guard sqlite3_prepare_v2(db, "SELECT lemma, content, ts FROM note ORDER BY id", -1, &stmt, nil) == SQLITE_OK else { return out }
+            defer { sqlite3_finalize(stmt) }
+            while sqlite3_step(stmt) == SQLITE_ROW {
+                out.append([
+                    "lemma": text(stmt, 0), "content": text(stmt, 1),
+                    "ts": ISO8601DateFormatter().string(from: Date(timeIntervalSince1970: sqlite3_column_double(stmt, 2))),
+                ])
+            }
+            return out
+        }
         return try? JSONSerialization.data(
-            withJSONObject: ["version": 1, "words": words, "lookup_log": log],
+            withJSONObject: ["version": 1, "words": words, "lookup_log": log, "notes": notes],
             options: [.prettyPrinted, .sortedKeys]
         )
     }
@@ -265,6 +380,27 @@ final class VocabStore {
                 }
             }
             imported += 1
+        }
+        if let notes = root["notes"] as? [[String: Any]] {
+            for note in notes {
+                guard let lemma = note["lemma"] as? String,
+                      let content = note["content"] as? String,
+                      let ts = (note["ts"] as? String).flatMap(iso.date(from:)) else { continue }
+                queue.sync {
+                    // skip if the identical note already exists
+                    var stmt: OpaquePointer?
+                    var exists = false
+                    if sqlite3_prepare_v2(db, "SELECT 1 FROM note WHERE lemma=? AND content=? AND ts=?", -1, &stmt, nil) == SQLITE_OK {
+                        bind(stmt, [.text(lemma), .text(content), .real(ts.timeIntervalSince1970)])
+                        exists = sqlite3_step(stmt) == SQLITE_ROW
+                        sqlite3_finalize(stmt)
+                    }
+                    if !exists {
+                        run("INSERT INTO note(lemma, content, ts) VALUES(?,?,?)",
+                            [.text(lemma), .text(content), .real(ts.timeIntervalSince1970)])
+                    }
+                }
+            }
         }
         return imported
     }

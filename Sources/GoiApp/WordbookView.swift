@@ -1,9 +1,101 @@
 import SwiftUI
 import UniformTypeIdentifiers
 
+struct HistoryView: View {
+    let vocab: VocabStore
+    var onSelect: (String) -> Void
+    @State private var rows: [VocabStore.LogRow] = []
+    @State private var page = 0
+    @State private var total = 0
+    private let pageSize = 50
+
+    private var totalPages: Int { max(1, (total + pageSize - 1) / pageSize) }
+
+    var body: some View {
+        VStack(spacing: 0) {
+            HStack {
+                Text("查词历史").font(.headline)
+                Text("\(total) 条").foregroundColor(.secondary).font(.subheadline)
+                Spacer()
+                Button {
+                    page -= 1
+                    load()
+                } label: { Image(systemName: "chevron.left") }
+                    .disabled(page == 0)
+                Text("\(page + 1) / \(totalPages)").font(.system(size: 12)).monospacedDigit()
+                Button {
+                    page += 1
+                    load()
+                } label: { Image(systemName: "chevron.right") }
+                    .disabled(page + 1 >= totalPages)
+            }
+            .padding(12)
+            Divider()
+
+            if rows.isEmpty {
+                Spacer()
+                Text("还没有查询记录").foregroundColor(.secondary)
+                Spacer()
+            } else {
+                List(rows) { row in
+                    HStack(spacing: 10) {
+                        VStack(alignment: .leading, spacing: 1) {
+                            Text(row.surface).font(.system(size: 14, weight: .medium))
+                            if row.lemma != row.surface {
+                                Text("→ \(row.lemma)")
+                                    .font(.system(size: 11))
+                                    .foregroundColor(.secondary)
+                            }
+                        }
+                        Spacer()
+                        Text(Self.sourceLabel(row.source))
+                            .font(.system(size: 10))
+                            .padding(.horizontal, 6)
+                            .padding(.vertical, 2)
+                            .background(Color.primary.opacity(0.06), in: Capsule())
+                            .foregroundColor(.secondary)
+                        Text(Self.dateFormatter.string(from: row.ts))
+                            .font(.system(size: 11))
+                            .foregroundColor(.secondary)
+                            .monospacedDigit()
+                    }
+                    .contentShape(Rectangle())
+                    .onTapGesture { onSelect(row.lemma) }
+                    .help("点击查看（不计入查询次数）")
+                }
+                .listStyle(.inset)
+            }
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .onAppear(perform: load)
+    }
+
+    private func load() {
+        total = vocab.historyCount()
+        if page >= totalPages { page = max(0, totalPages - 1) }
+        rows = vocab.history(offset: page * pageSize, limit: pageSize)
+    }
+
+    private static func sourceLabel(_ source: String) -> String {
+        switch source {
+        case "typed": return "键入"
+        case "suggestion": return "候选"
+        case "link": return "链接"
+        default: return source
+        }
+    }
+
+    private static let dateFormatter: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "MM-dd HH:mm"
+        return formatter
+    }()
+}
+
 struct WordbookView: View {
     let vocab: VocabStore
     let store: DictionaryStore
+    var onSelect: (String) -> Void = { _ in }
     @State private var rows: [VocabStore.WordRow] = []
     @State private var status = ""
     @State private var busy = false
@@ -44,6 +136,9 @@ struct WordbookView: View {
                                         .lineLimit(1)
                                 }
                             }
+                            .contentShape(Rectangle())
+                            .onTapGesture { onSelect(row.lemma) }
+                            .help("点击查看（不计入查询次数）")
                             Spacer()
                             Text("\(row.lookupCount) 次")
                                 .font(.system(size: 11))
