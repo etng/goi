@@ -11,6 +11,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var hotKey: HotKey?
     private var selectionHotKey: HotKey?
 
+    // screenshot mode (docs)
+    var shotSection: PanelSection?
+    var shotQuery: String?
+    var shotDark = false
+    var shotWindowFile: String?
+
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.accessory)
         AppTheme.applySaved()
@@ -102,6 +108,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func dictionariesLoaded() {
         statusItem.button?.appearsDisabled = false
         model.showWelcome()
+
+        // screenshot mode: present the requested section (and lookup), then
+        // publish the window number for an external screencapture
+        if let section = shotSection {
+            // set appearance transiently (don't persist the user's real setting)
+            NSApp.appearance = NSAppearance(named: shotDark ? .darkAqua : .aqua)
+            panel.show(section: section)
+            if let q = shotQuery, !q.isEmpty {
+                if section == .search { model.search(q) } else { model.browse(q) }
+            }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) { [weak self] in
+                guard let self, let file = self.shotWindowFile else { return }
+                try? "\(self.panel.windowNumber)".write(toFile: file, atomically: true, encoding: .utf8)
+            }
+            return
+        }
 
         // in-app dependency prompt (not just a line in the report)
         if !Mecab.isAvailable, !UserDefaults.standard.bool(forKey: "mecabPromptDismissed") {
