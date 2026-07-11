@@ -65,7 +65,10 @@ final class LoadedDictionary {
     /// Resolves a resource referenced from an entry: first the MDD archives,
     /// then loose files in the dictionary's folder.
     func resource(path raw: String) -> Data? {
-        let decoded = raw.removingPercentEncoding ?? raw
+        var decoded = raw.removingPercentEncoding ?? raw
+        // dictionaries reference resources with a relative "./" (or ".\")
+        // prefix; strip it so the MDD key resolves (\SPX\x.spx, not \.\SPX\…)
+        while decoded.hasPrefix("./") || decoded.hasPrefix(".\\") { decoded.removeFirst(2) }
         var key = decoded.replacingOccurrences(of: "/", with: "\\")
         if !key.hasPrefix("\\") { key = "\\" + key }
         for mdd in resources {

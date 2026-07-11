@@ -21,7 +21,10 @@ final class SearchPanel: NSPanel {
         // would swallow the tab strip's drag-to-reorder
         isMovableByWindowBackground = false
         isReleasedWhenClosed = false
-        level = .floating
+        // normal level so switching to another app sends it behind as usual
+        // (⌥Space re-summons); floating would pin it permanently on top
+        level = .normal
+        hidesOnDeactivate = false
         collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
         contentMinSize = NSSize(width: 760, height: 480)
         setFrameAutosaveName("GoiPanel")

@@ -378,48 +378,35 @@ struct HeaderBar: View {
     @ObservedObject var model: SearchViewModel
 
     var body: some View {
-        HStack(spacing: 8) {
-            Spacer(minLength: 0)
-            if !model.store.isReady {
-                Text("正在加载词典…")
-                    .font(.system(size: 11))
-                    .foregroundColor(.secondary)
+        ZStack {
+            WindowDragArea()               // base layer actually receives mouse events
+            HStack {
+                Spacer(minLength: 0)
+                if !model.store.isReady {
+                    Text("正在加载词典…")
+                        .font(.system(size: 11))
+                        .foregroundColor(.secondary)
+                }
             }
+            .padding(.horizontal, 12)
+            .allowsHitTesting(false)       // let clicks fall through to the drag view
         }
-        .padding(.horizontal, 12)
         .frame(height: 26)
-        .contentShape(Rectangle())
-        .background(WindowDragArea())
     }
 }
 
-/// Lets the strip act as the window drag region, with double-click-to-zoom.
-/// A double-click's first mouseDown (clickCount 1) must NOT enter performDrag
-/// or it swallows the second click — so we defer the drag until the mouse
-/// actually moves.
+/// The title strip's drag region: drag to move, double-click to zoom. As a
+/// real (non-.background) NSView it reliably receives the clicks.
 private struct WindowDragArea: NSViewRepresentable {
     final class DragView: NSView {
+        override func hitTest(_ point: NSPoint) -> NSView? { self }
+
         override func mouseDown(with event: NSEvent) {
-            if event.clickCount >= 2 {
+            if event.clickCount == 2 {
                 (window as? SearchPanel)?.toggleZoom()
-                return
+            } else {
+                window?.performDrag(with: event)
             }
-            // wait for movement before treating it as a drag, so a
-            // double-click's first click doesn't block the second
-            guard let window else { return }
-            var moved = false
-            window.trackEvents(matching: [.leftMouseDragged, .leftMouseUp], timeout: .infinity, mode: .eventTracking) { next, stop in
-                switch next?.type {
-                case .leftMouseDragged:
-                    moved = true
-                    stop.pointee = true
-                case .leftMouseUp:
-                    stop.pointee = true
-                default:
-                    break
-                }
-            }
-            if moved { window.performDrag(with: event) }
         }
     }
 
