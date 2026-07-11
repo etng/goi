@@ -109,6 +109,14 @@ enum EntryHTML {
            for a white background, and inverting it wrecks colors/contrast.
            In dark mode the entry sits as a white card on the dark canvas. */
         body { margin: 8px 12px; font-family: -apple-system; background: #fff; color: #111; }
+        /* contain dictionaries whose CSS overflows horizontally (e.g. 明鏡's
+           related-word rows): wrap long content, cap media/tables to the
+           width, and let genuinely wide tables scroll inside themselves
+           instead of stretching the whole entry */
+        html { overflow-x: hidden; }
+        body { overflow-wrap: anywhere; word-break: break-word; }
+        img, svg, video { max-width: 100%; height: auto; }
+        table { max-width: 100%; display: block; overflow-x: auto; }
         </style>
         <script>
         const DICT_ID = "\(dict.id)";

@@ -13,7 +13,7 @@ final class SearchPanel: NSPanel {
         let size = Self.defaultContentSize()
         super.init(
             contentRect: NSRect(x: 0, y: 0, width: size.width, height: size.height),
-            styleMask: [.titled, .closable, .resizable, .nonactivatingPanel],
+            styleMask: [.titled, .closable, .resizable],
             backing: .buffered,
             defer: false
         )
@@ -21,17 +21,17 @@ final class SearchPanel: NSPanel {
         title = "Goi"
         standardWindowButton(.miniaturizeButton)?.isHidden = true
         isReleasedWhenClosed = false
-        // normal level so switching to another app sends it behind as usual
-        // (⌥Space re-summons); floating would pin it permanently on top
         level = .normal
         hidesOnDeactivate = false
         collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
         contentMinSize = NSSize(width: 820, height: 520)
         setFrameAutosaveName("GoiPanelV3")   // fresh key → new dynamic default applies once
         contentView = NSHostingView(rootView: RootView(model: model))
+        delegate = self
     }
 
     override var canBecomeKey: Bool { true }
+    override var canBecomeMain: Bool { true }
 
     /// Comfortable default sized to the screen: wider than the content needs,
     /// but never larger than the usable area (small screens ≈ full screen).
@@ -44,7 +44,7 @@ final class SearchPanel: NSPanel {
 
     func toggle() {
         if isVisible {
-            orderOut(nil)
+            hide()
         } else {
             show()
         }
@@ -66,12 +66,29 @@ final class SearchPanel: NSPanel {
                                  y: visible.minY + visible.height * 0.6 - size.height / 2)
             setFrame(NSRect(origin: origin, size: size), display: false)
         }
+        // become a regular app while visible so the window shows up in
+        // Cmd-Tab and the Dock; we drop back to accessory when it closes
+        NSApp.setActivationPolicy(.regular)
         makeKeyAndOrderFront(nil)
+        NSApp.activate(ignoringOtherApps: true)
         NotificationCenter.default.post(name: .goiPanelShown, object: nil)
+    }
+
+    /// Hide and return to menu-bar-only (accessory) so no Dock icon lingers.
+    func hide() {
+        orderOut(nil)
+        NSApp.setActivationPolicy(.accessory)
     }
 
     // Esc
     override func cancelOperation(_ sender: Any?) {
-        orderOut(nil)
+        hide()
+    }
+}
+
+extension SearchPanel: NSWindowDelegate {
+    // traffic-light close button
+    func windowWillClose(_ notification: Notification) {
+        NSApp.setActivationPolicy(.accessory)
     }
 }
