@@ -103,19 +103,20 @@ struct AboutView: View {
                 .foregroundColor(.secondary)
                 .multilineTextAlignment(.center)
         } else {
-            HStack(spacing: 20) {
+            HStack(spacing: 40) {
                 ForEach(qrs, id: \.name) { qr in
-                    VStack(spacing: 4) {
+                    VStack(spacing: 8) {
                         Image(nsImage: qr.image)
                             .resizable()
                             .interpolation(.high)
                             .scaledToFit()
-                            .frame(width: 140, height: 140)
-                            .background(Color.white, in: RoundedRectangle(cornerRadius: 6))
-                        Text(qr.name).font(.system(size: 11)).foregroundColor(.secondary)
+                            .frame(width: 260, height: 260)
+                            .background(Color.white, in: RoundedRectangle(cornerRadius: 8))
+                        Text(qr.name).font(.system(size: 12)).foregroundColor(.secondary)
                     }
                 }
             }
+            .padding(.vertical, 10)
         }
     }
 

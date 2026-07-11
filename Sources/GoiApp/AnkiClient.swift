@@ -101,6 +101,45 @@ enum AnkiClient {
         }
     }
 
+    struct ReviewStat {
+        let intervalDays: Int
+        let easeFactor: Int   // Anki "factor", 2500 = 250%
+        let lapses: Int
+    }
+
+    /// Review state of every goi-tagged card, keyed by GoiId (= lemma).
+    /// Per note, the card with the longest interval wins.
+    static func pullReviewStats() throws -> [String: ReviewStat] {
+        let cardIDs = try invoke("findCards", ["query": "tag:goi"]) as? [Any] ?? []
+        guard !cardIDs.isEmpty else { return [:] }
+        let cards = try invoke("cardsInfo", ["cards": cardIDs]) as? [[String: Any]] ?? []
+        var out: [String: ReviewStat] = [:]
+        for card in cards {
+            guard let fields = card["fields"] as? [String: Any],
+                  let goiField = fields["GoiId"] as? [String: Any],
+                  let goiID = goiField["value"] as? String, !goiID.isEmpty else { continue }
+            // negative interval = still learning, measured in seconds
+            let interval = max(0, card["interval"] as? Int ?? 0)
+            let stat = ReviewStat(
+                intervalDays: interval,
+                easeFactor: card["factor"] as? Int ?? 2500,
+                lapses: card["lapses"] as? Int ?? 0
+            )
+            if let existing = out[goiID], existing.intervalDays >= stat.intervalDays { continue }
+            out[goiID] = stat
+        }
+        return out
+    }
+
+    /// Familiarity v0 mapping from spaced-repetition state: a card you keep
+    /// answering correctly at long intervals is a word you know.
+    static func familiarity(from stat: ReviewStat) -> Double {
+        guard stat.intervalDays > 0 else { return 0 } // learning stage: no signal yet
+        let base = 30.0 + Double(stat.intervalDays) * 1.5
+        let easeBonus = Double(stat.easeFactor - 2500) / 50.0
+        return min(95, max(0, base + easeBonus))
+    }
+
     struct PushResult {
         var added = 0
         var updated = 0

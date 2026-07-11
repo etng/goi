@@ -72,6 +72,17 @@ final class VocabStore {
             PRIMARY KEY(dict_id, day)
         );
         """)
+        // migration: familiarity provenance (auto | manual | anki); harmless
+        // no-op when the column already exists
+        exec("ALTER TABLE word ADD COLUMN familiarity_source TEXT NOT NULL DEFAULT 'auto'")
+    }
+
+    /// Direct familiarity write (e.g. Anki review data flowing back).
+    func setFamiliarity(lemma: String, value: Double, source: String) {
+        queue.sync {
+            run("UPDATE word SET familiarity=?, familiarity_source=? WHERE lemma=?",
+                [.real(max(0, min(100, value))), .text(source), .text(lemma)])
+        }
     }
 
     deinit { sqlite3_close(db) }

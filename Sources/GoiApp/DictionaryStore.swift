@@ -1,3 +1,4 @@
+import AppKit
 import Foundation
 import MdictKit
 
@@ -8,6 +9,7 @@ struct DictFailure {
 }
 
 final class LoadedDictionary {
+    /// Content fingerprint of the MDX — stable across re-imports.
     let id: String
     /// Original title from the dictionary header / filename.
     let title: String
@@ -15,26 +17,23 @@ final class LoadedDictionary {
     var displayTitle: String
     let mdx: MdictFile
     let resources: [MdictFile]   // sibling MDD archives, in order (X.mdd, X.1.mdd, …)
+    /// The dictionary's own directory inside the app library.
     let folder: URL
     /// lowercased basename -> URL for loose files beside the dictionary (css, images)
     let looseFiles: [String: URL]
 
-    init(mdx: MdictFile, resources: [MdictFile], folder: URL, looseFiles: [String: URL]) {
+    init(id: String, mdx: MdictFile, resources: [MdictFile], folder: URL, looseFiles: [String: URL]) {
+        self.id = id
         self.mdx = mdx
         self.resources = resources
         self.folder = folder
         self.looseFiles = looseFiles
-        let path = mdx.url.path
-        self.id = String(format: "%08x", path.utf8.reduce(UInt32(2166136261)) { ($0 ^ UInt32($1)) &* 16777619 })
         let headerTitle = mdx.header.title?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         self.title = headerTitle.isEmpty || headerTitle.lowercased() == "title (no html code allowed)"
             ? mdx.url.deletingPathExtension().lastPathComponent
             : headerTitle
         self.displayTitle = self.title
     }
-
-    /// Every file belonging to this dictionary (for in-app deletion).
-    var fileURLs: [URL] { [mdx.url] + resources.map(\.url) }
 
     /// Resolves a resource referenced from an entry: first the MDD archives,
     /// then loose files in the dictionary's folder.
@@ -57,24 +56,14 @@ final class LoadedDictionary {
     }
 }
 
+/// The dictionary library lives inside the app container. Import clones the
+/// user's files (APFS copy-on-write: zero extra space on the same volume),
+/// so afterwards the originals can be moved or deleted freely — 「随便删，
+/// 我有克隆」. Removing a dictionary here deletes only our clone.
 final class DictionaryStore {
     private(set) var dictionaries: [LoadedDictionary] = []
     private(set) var failures: [DictFailure] = []
     private(set) var isReady = false
-
-    var rootURL: URL {
-        get {
-            if let path = UserDefaults.standard.string(forKey: "dictionaryRoot") {
-                return URL(fileURLWithPath: path)
-            }
-            return URL(fileURLWithPath: NSHomeDirectory() + "/dicts")
-        }
-        set { UserDefaults.standard.set(newValue.path, forKey: "dictionaryRoot") }
-    }
-
-    static var reportURL: URL {
-        supportDirectory.appendingPathComponent("词典解析报告.md")
-    }
 
     static var supportDirectory: URL {
         let url = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
@@ -83,35 +72,57 @@ final class DictionaryStore {
         return url
     }
 
+    static var dictionariesContainer: URL {
+        let url = supportDirectory.appendingPathComponent("Dictionaries")
+        try? FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
+        return url
+    }
+
+    static var reportURL: URL {
+        supportDirectory.appendingPathComponent("词典解析报告.md")
+    }
+
+    // MARK: - Loading (scans the app library, not user folders)
+
     func loadAll(progress: @escaping (String) -> Void, completion: @escaping () -> Void) {
         DispatchQueue.global(qos: .userInitiated).async { [self] in
             var loaded: [LoadedDictionary] = []
             var failed: [DictFailure] = []
+            let fm = FileManager.default
 
-            var mdxFiles: [URL] = []
-            var mddFiles: [URL] = []
-            let enumerator = FileManager.default.enumerator(
-                at: rootURL, includingPropertiesForKeys: [.isRegularFileKey]
-            )
-            while let item = enumerator?.nextObject() as? URL {
-                guard (try? item.resourceValues(forKeys: [.isRegularFileKey]).isRegularFile) == true else { continue }
-                switch item.pathExtension.lowercased() {
-                case "mdx": mdxFiles.append(item)
-                case "mdd": mddFiles.append(item)
-                default: break
+            let subdirs = ((try? fm.contentsOfDirectory(
+                at: Self.dictionariesContainer,
+                includingPropertiesForKeys: [.isDirectoryKey],
+                options: [.skipsHiddenFiles]
+            )) ?? []).filter {
+                (try? $0.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) == true
+            }.sorted { $0.lastPathComponent.localizedStandardCompare($1.lastPathComponent) == .orderedAscending }
+
+            for dir in subdirs {
+                let entries = (try? fm.contentsOfDirectory(
+                    at: dir, includingPropertiesForKeys: [.isRegularFileKey], options: [.skipsHiddenFiles]
+                )) ?? []
+                guard let mdxURL = entries.first(where: {
+                    $0.pathExtension.lowercased() == "mdx"
+                        && (try? $0.resourceValues(forKeys: [.isRegularFileKey]).isRegularFile) == true
+                }) else {
+                    failed.append(DictFailure(
+                        name: dir.lastPathComponent, path: dir.path,
+                        reason: "库目录中找不到 MDX 文件（导入可能中断过，可移除后重新添加）"
+                    ))
+                    continue
                 }
-            }
-            mdxFiles.sort { $0.path.localizedStandardCompare($1.path) == .orderedAscending }
-
-            for url in mdxFiles {
-                let name = url.deletingPathExtension().lastPathComponent
-                progress(name)
+                progress(mdxURL.deletingPathExtension().lastPathComponent)
                 do {
-                    let mdx = try MdictFile(url: url)
-                    let folder = url.deletingLastPathComponent()
-                    let siblings = Self.siblingMDDs(for: url, in: mddFiles)
+                    let mdx = try MdictFile(url: mdxURL)
                     var resources: [MdictFile] = []
-                    for mddURL in siblings {
+                    let mdds = entries
+                        .filter { $0.pathExtension.lowercased() == "mdd" }
+                        .sorted {
+                            $0.lastPathComponent.count < $1.lastPathComponent.count
+                                || ($0.lastPathComponent.count == $1.lastPathComponent.count && $0.path < $1.path)
+                        }
+                    for mddURL in mdds {
                         do {
                             resources.append(try MdictFile(url: mddURL))
                         } catch {
@@ -121,11 +132,14 @@ final class DictionaryStore {
                             ))
                         }
                     }
-                    let loose = Self.indexLooseFiles(in: folder)
-                    loaded.append(LoadedDictionary(mdx: mdx, resources: resources, folder: folder, looseFiles: loose))
+                    let id = Self.fingerprint(of: mdxURL) ?? dir.lastPathComponent
+                    loaded.append(LoadedDictionary(
+                        id: id, mdx: mdx, resources: resources,
+                        folder: dir, looseFiles: Self.indexLooseFiles(in: dir)
+                    ))
                 } catch {
                     failed.append(DictFailure(
-                        name: url.lastPathComponent, path: url.path,
+                        name: mdxURL.lastPathComponent, path: mdxURL.path,
                         reason: "暂时不可解析：\(error)"
                     ))
                 }
@@ -148,23 +162,6 @@ final class DictionaryStore {
         }
     }
 
-    /// X.mdx pairs with X.mdd, X.1.mdd, X.2.mdd … in the same directory.
-    private static func siblingMDDs(for mdx: URL, in mddFiles: [URL]) -> [URL] {
-        let stem = mdx.deletingPathExtension().lastPathComponent
-        let dir = mdx.deletingLastPathComponent().path
-        return mddFiles
-            .filter { mdd in
-                guard mdd.deletingLastPathComponent().path == dir else { return false }
-                var mddStem = mdd.deletingPathExtension().lastPathComponent
-                if let dot = mddStem.range(of: #"\.\d+$"#, options: .regularExpression) {
-                    mddStem = String(mddStem[..<dot.lowerBound])
-                }
-                return mddStem == stem
-            }
-            .sorted { $0.lastPathComponent.count < $1.lastPathComponent.count
-                || ($0.lastPathComponent.count == $1.lastPathComponent.count && $0.path < $1.path) }
-    }
-
     private static func indexLooseFiles(in folder: URL) -> [String: URL] {
         var map: [String: URL] = [:]
         let enumerator = FileManager.default.enumerator(at: folder, includingPropertiesForKeys: [.isRegularFileKey])
@@ -179,6 +176,151 @@ final class DictionaryStore {
             count += 1
         }
         return map
+    }
+
+    // MARK: - Import (clone into the library)
+
+    struct ImportSummary {
+        var imported: [String] = []
+        var skippedDuplicates: [String] = []
+        var failed: [(name: String, reason: String)] = []
+    }
+
+    /// Content fingerprint: FNV-1a over the first 256KB + file size.
+    static func fingerprint(of url: URL) -> String? {
+        guard let handle = try? FileHandle(forReadingFrom: url) else { return nil }
+        defer { try? handle.close() }
+        let head = (try? handle.read(upToCount: 262_144)) ?? Data()
+        let size = (try? FileManager.default.attributesOfItem(atPath: url.path)[.size] as? Int) ?? 0
+        var hash: UInt64 = 0xcbf2_9ce4_8422_2325
+        for byte in head {
+            hash = (hash ^ UInt64(byte)) &* 0x0000_0100_0000_01b3
+        }
+        hash = (hash ^ UInt64(size ?? 0)) &* 0x0000_0100_0000_01b3
+        return String(format: "%016llx", hash)
+    }
+
+    /// Imports every MDX found under the given files/folders by cloning it
+    /// (plus paired MDDs and loose resources) into the app library.
+    func importDictionaries(
+        from urls: [URL],
+        progress: @escaping (String) -> Void,
+        completion: @escaping (ImportSummary) -> Void
+    ) {
+        DispatchQueue.global(qos: .userInitiated).async {
+            let fm = FileManager.default
+            var summary = ImportSummary()
+
+            var mdxFiles: [URL] = []
+            for url in urls {
+                var isDir: ObjCBool = false
+                guard fm.fileExists(atPath: url.path, isDirectory: &isDir) else { continue }
+                if isDir.boolValue {
+                    let enumerator = fm.enumerator(at: url, includingPropertiesForKeys: [.isRegularFileKey])
+                    while let item = enumerator?.nextObject() as? URL {
+                        guard (try? item.resourceValues(forKeys: [.isRegularFileKey]).isRegularFile) == true else { continue }
+                        if item.pathExtension.lowercased() == "mdx" { mdxFiles.append(item) }
+                    }
+                } else if url.pathExtension.lowercased() == "mdx" {
+                    mdxFiles.append(url)
+                }
+            }
+            mdxFiles.sort { $0.path.localizedStandardCompare($1.path) == .orderedAscending }
+
+            var existing = Set(Self.libraryFingerprints())
+            for mdx in mdxFiles {
+                let name = mdx.deletingPathExtension().lastPathComponent
+                progress(name)
+                guard let fingerprint = Self.fingerprint(of: mdx) else {
+                    summary.failed.append((name, "无法读取文件"))
+                    continue
+                }
+                if existing.contains(fingerprint) {
+                    summary.skippedDuplicates.append(name)
+                    continue
+                }
+                do {
+                    try Self.cloneDictionary(mdx: mdx, fingerprint: fingerprint)
+                    existing.insert(fingerprint)
+                    summary.imported.append(name)
+                } catch {
+                    summary.failed.append((name, "\(error)"))
+                }
+            }
+            completion(summary)
+        }
+    }
+
+    private static func libraryFingerprints() -> [String] {
+        let fm = FileManager.default
+        let subdirs = (try? fm.contentsOfDirectory(
+            at: dictionariesContainer, includingPropertiesForKeys: [.isDirectoryKey], options: [.skipsHiddenFiles]
+        )) ?? []
+        return subdirs.compactMap { dir in
+            let entries = (try? fm.contentsOfDirectory(at: dir, includingPropertiesForKeys: nil)) ?? []
+            guard let mdx = entries.first(where: { $0.pathExtension.lowercased() == "mdx" }) else { return nil }
+            return fingerprint(of: mdx)
+        }
+    }
+
+    /// Clones one dictionary into its own library directory. On the same
+    /// APFS volume FileManager.copyItem uses clonefile: instant and free.
+    private static func cloneDictionary(mdx: URL, fingerprint: String) throws {
+        let fm = FileManager.default
+        let stem = mdx.deletingPathExtension().lastPathComponent
+        let safeStem = stem
+            .replacingOccurrences(of: "/", with: "_")
+            .replacingOccurrences(of: ":", with: "_")
+        let destDir = dictionariesContainer.appendingPathComponent("\(safeStem)-\(fingerprint.prefix(8))")
+        if fm.fileExists(atPath: destDir.path) {
+            try fm.removeItem(at: destDir) // stale partial import
+        }
+        try fm.createDirectory(at: destDir, withIntermediateDirectories: true)
+
+        try fm.copyItem(at: mdx, to: destDir.appendingPathComponent(mdx.lastPathComponent))
+
+        let sourceDir = mdx.deletingLastPathComponent()
+        let siblings = (try? fm.contentsOfDirectory(
+            at: sourceDir, includingPropertiesForKeys: [.isDirectoryKey], options: [.skipsHiddenFiles]
+        )) ?? []
+        for item in siblings {
+            let isDir = (try? item.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) ?? false
+            let ext = item.pathExtension.lowercased()
+            let dest = destDir.appendingPathComponent(item.lastPathComponent)
+            if isDir {
+                // resource folders only; a folder containing MDX/MDD is another dictionary
+                if !containsMdict(item) { try? fm.copyItem(at: item, to: dest) }
+            } else if ext == "mdd" {
+                // X.mdx pairs with X.mdd, X.1.mdd, …
+                var mddStem = item.deletingPathExtension().lastPathComponent
+                if let range = mddStem.range(of: #"\.\d+$"#, options: .regularExpression) {
+                    mddStem = String(mddStem[..<range.lowerBound])
+                }
+                if mddStem == stem { try fm.copyItem(at: item, to: dest) }
+            } else if ext != "mdx" {
+                try? fm.copyItem(at: item, to: dest) // loose css/js/images
+            }
+        }
+    }
+
+    private static func containsMdict(_ dir: URL) -> Bool {
+        let enumerator = FileManager.default.enumerator(at: dir, includingPropertiesForKeys: nil)
+        while let item = enumerator?.nextObject() as? URL {
+            if ["mdx", "mdd"].contains(item.pathExtension.lowercased()) { return true }
+        }
+        return false
+    }
+
+    /// Removing = deleting our clone (drops the block references; the user's
+    /// original files are untouched). The folder goes to Trash for safety.
+    func removeFromLibrary(_ dict: LoadedDictionary, completion: @escaping (Error?) -> Void) {
+        guard dict.folder.path.hasPrefix(Self.dictionariesContainer.path) else {
+            completion(NSError(domain: "goi", code: 2, userInfo: [NSLocalizedDescriptionKey: "词典不在库目录内，拒绝删除"]))
+            return
+        }
+        NSWorkspace.shared.recycle([dict.folder]) { _, error in
+            DispatchQueue.main.async { completion(error) }
+        }
     }
 
     // MARK: - Search
@@ -260,7 +402,7 @@ final class DictionaryStore {
         dictionaries.first { $0.id == id }
     }
 
-    // MARK: - Display order
+    // MARK: - Display order & aliases
 
     private static let orderKey = "dictionaryOrder"
 
@@ -324,7 +466,8 @@ final class DictionaryStore {
             "# Goi 词典解析报告",
             "",
             "生成时间：\(ISO8601DateFormatter().string(from: Date()))",
-            "词典目录：`\(rootURL.path)`",
+            "词典库位置：`\(Self.dictionariesContainer.path)`",
+            "（词典以 APFS 克隆方式导入，原始文件可随意移动或删除）",
             "",
             "## 已加载（\(dictionaries.count)）",
             "",

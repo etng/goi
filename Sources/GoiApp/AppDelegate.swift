@@ -177,18 +177,4 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     @objc private func openReport() { NSWorkspace.shared.open(DictionaryStore.reportURL) }
 
     @objc private func reload() { loadDictionaries() }
-
-    @objc private func chooseRoot() {
-        NSApp.activate(ignoringOtherApps: true)
-        let dialog = NSOpenPanel()
-        dialog.canChooseDirectories = true
-        dialog.canChooseFiles = false
-        dialog.directoryURL = store.rootURL
-        dialog.prompt = "使用此目录"
-        dialog.message = "选择存放 MDX/MDD 词典的目录"
-        if dialog.runModal() == .OK, let url = dialog.url {
-            store.rootURL = url
-            loadDictionaries()
-        }
-    }
 }

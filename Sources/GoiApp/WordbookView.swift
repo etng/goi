@@ -110,6 +110,9 @@ struct WordbookView: View {
                 Button("导出 CSV") { exportCSV() }.disabled(busy || rows.isEmpty)
                 Button("导出 JSON") { exportJSON() }.disabled(busy)
                 Button("同步到 Anki") { pushToAnki() }.disabled(busy || rows.isEmpty)
+                Button("从 Anki 回读") { pullFromAnki() }
+                    .disabled(busy)
+                    .help("读取 Anki 复习数据（间隔/难度），把确实记住的词的熟悉度调上去")
             }
             .padding(12)
             Divider()
@@ -257,6 +260,40 @@ struct WordbookView: View {
         }
     }
 
+    private func pullFromAnki() {
+        busy = true
+        status = "正在读取 Anki 复习数据…"
+        let words = rows
+        DispatchQueue.global(qos: .userInitiated).async {
+            do {
+                let stats = try AnkiClient.pullReviewStats()
+                var raised = 0
+                for row in words {
+                    guard let stat = stats[row.lemma] else { continue }
+                    let ankiValue = AnkiClient.familiarity(from: stat)
+                    // one-directional for v0: Anki can only certify you KNOW a
+                    // word better than our lookup counter thought
+                    if ankiValue > VocabStore.effectiveFamiliarity(of: row) {
+                        vocab.setFamiliarity(lemma: row.lemma, value: ankiValue, source: "anki")
+                        raised += 1
+                    }
+                }
+                DispatchQueue.main.async {
+                    busy = false
+                    reload()
+                    status = stats.isEmpty
+                        ? "Anki 里还没有 goi 标签的卡片（先「同步到 Anki」并复习一段时间）"
+                        : "回读完成：\(stats.count) 张卡片，上调了 \(raised) 个词的熟悉度"
+                }
+            } catch {
+                DispatchQueue.main.async {
+                    busy = false
+                    status = "回读失败：\(error.localizedDescription)"
+                }
+            }
+        }
+    }
+
     /// Plain-text definition from the highest-priority dictionary that has
     /// the word (Anki can't resolve goi:// resources, so tags are stripped).
     private func definition(for lemma: String) -> String {
@@ -306,22 +343,34 @@ struct SettingsView: View {
         let entries: Int
     }
 
+    @State private var importing = false
+    @State private var importStatus = ""
+
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            // ---- dictionaries directory ----
+            // ---- library ----
             VStack(alignment: .leading, spacing: 6) {
-                Text("词典目录").font(.headline)
+                Text("词典库").font(.headline)
+                Text("词典以 APFS 克隆导入到 App 自己的库里（同卷零额外空间、瞬间完成）。导入后原始文件可随意移动或删除，互不影响。")
+                    .font(.system(size: 11))
+                    .foregroundColor(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
                 HStack {
-                    Text(store.rootURL.path)
-                        .font(.system(size: 12, design: .monospaced))
+                    if importing {
+                        ProgressView().controlSize(.small)
+                    }
+                    Text(importStatus.isEmpty ? "库位置：\(DictionaryStore.dictionariesContainer.path)" : importStatus)
+                        .font(.system(size: 11, design: .monospaced))
                         .foregroundColor(.secondary)
                         .lineLimit(1)
                         .truncationMode(.middle)
                     Spacer()
-                    Button("更换…") { chooseRoot() }
-                    Button("重新加载") {
+                    Button("添加词典…") { addDictionaries() }
+                        .disabled(importing)
+                    Button("重新扫描") {
                         NotificationCenter.default.post(name: .goiReloadRequested, object: nil)
                     }
+                    .disabled(importing)
                 }
             }
             .padding(12)
@@ -402,8 +451,8 @@ struct SettingsView: View {
                             onReorder()
                         }
                         Divider()
-                        Button("删除词典（移到废纸篓）…", role: .destructive) {
-                            deleteDictionary(row)
+                        Button("从库中移除…", role: .destructive) {
+                            removeDictionary(row)
                         }
                     }
                 }
@@ -414,7 +463,7 @@ struct SettingsView: View {
                 }
             }
             .listStyle(.inset)
-            Text("双击名称可改短别名（tab 显示用）；右键可删除词典——文件会移到废纸篓，可随时找回。")
+            Text("点铅笔改短别名（tab 显示用）；右键「从库中移除」只删 App 的克隆并释放引用，你的原始词典文件不受影响。")
                 .font(.system(size: 10))
                 .foregroundColor(.secondary)
                 .padding([.horizontal, .bottom], 12)
@@ -423,43 +472,60 @@ struct SettingsView: View {
         .onAppear(perform: reload)
     }
 
-    private func deleteDictionary(_ row: Row) {
+    private func removeDictionary(_ row: Row) {
         guard let dict = store.dictionaries.first(where: { $0.id == row.id }) else { return }
-        let files = dict.fileURLs
         let alert = NSAlert()
         alert.alertStyle = .warning
-        alert.messageText = "删除词典「\(dict.displayTitle)」？"
-        alert.informativeText = "以下 \(files.count) 个文件将移到废纸篓（可从废纸篓恢复）：\n"
-            + files.map { "· \($0.lastPathComponent)" }.joined(separator: "\n")
-            + "\n\n词典目录里的 CSS/图片等散文件不会被动。"
-        alert.addButton(withTitle: "移到废纸篓")
+        alert.messageText = "从库中移除「\(dict.displayTitle)」？"
+        alert.informativeText = "只删除 App 库里的克隆（移到废纸篓，可恢复）。你自己下载的原始词典文件不受任何影响。\n\n库目录：\(dict.folder.lastPathComponent)"
+        alert.addButton(withTitle: "移除")
         alert.addButton(withTitle: "取消")
         NSApp.activate(ignoringOtherApps: true)
         guard alert.runModal() == .alertFirstButtonReturn else { return }
-        NSWorkspace.shared.recycle(files) { _, error in
-            DispatchQueue.main.async {
-                if let error {
-                    let failure = NSAlert()
-                    failure.messageText = "删除失败"
-                    failure.informativeText = error.localizedDescription
-                    failure.runModal()
-                } else {
-                    NotificationCenter.default.post(name: .goiReloadRequested, object: nil)
-                }
+        store.removeFromLibrary(dict) { error in
+            if let error {
+                let failure = NSAlert()
+                failure.messageText = "移除失败"
+                failure.informativeText = error.localizedDescription
+                failure.runModal()
+            } else {
+                NotificationCenter.default.post(name: .goiReloadRequested, object: nil)
             }
         }
     }
 
-    private func chooseRoot() {
-        let dialog = NSOpenPanel()
-        dialog.canChooseDirectories = true
-        dialog.canChooseFiles = false
-        dialog.directoryURL = store.rootURL
-        dialog.prompt = "使用此目录"
-        dialog.message = "选择存放 MDX/MDD 词典的目录"
-        if dialog.runModal() == .OK, let url = dialog.url {
-            store.rootURL = url
-            NotificationCenter.default.post(name: .goiReloadRequested, object: nil)
+    private func addDictionaries() {
+        let panel = NSOpenPanel()
+        panel.canChooseDirectories = true
+        panel.canChooseFiles = true
+        panel.allowsMultipleSelection = true
+        panel.prompt = "导入"
+        panel.message = "选择 MDX 文件或包含词典的目录（如 ~/dicts），将以克隆方式导入词典库"
+        NSApp.activate(ignoringOtherApps: true)
+        guard panel.runModal() == .OK, !panel.urls.isEmpty else { return }
+        importing = true
+        importStatus = "正在导入…"
+        store.importDictionaries(from: panel.urls) { name in
+            DispatchQueue.main.async { importStatus = "正在导入 \(name)…" }
+        } completion: { summary in
+            DispatchQueue.main.async {
+                importing = false
+                var parts = ["导入 \(summary.imported.count) 本"]
+                if !summary.skippedDuplicates.isEmpty { parts.append("跳过重复 \(summary.skippedDuplicates.count) 本") }
+                if !summary.failed.isEmpty { parts.append("失败 \(summary.failed.count) 本") }
+                importStatus = parts.joined(separator: "，")
+                NotificationCenter.default.post(name: .goiReloadRequested, object: nil)
+                // never silent about failures
+                if !summary.failed.isEmpty {
+                    let alert = NSAlert()
+                    alert.alertStyle = .warning
+                    alert.messageText = "\(summary.failed.count) 本词典导入失败"
+                    alert.informativeText = summary.failed
+                        .map { "· \($0.name)：\($0.reason)" }
+                        .joined(separator: "\n")
+                    alert.runModal()
+                }
+            }
         }
     }
 
@@ -486,13 +552,21 @@ private struct AliasField: View {
                 .frame(maxWidth: 260)
                 .onExitCommand { editing = false }
         } else {
-            Text(row.title)
-                .lineLimit(1)
-                .help(originalTitle == row.title ? "双击改短别名" : "原名：\(originalTitle)（双击修改别名）")
-                .onTapGesture(count: 2) {
+            HStack(spacing: 4) {
+                Text(row.title)
+                    .lineLimit(1)
+                    .help(originalTitle == row.title ? "点铅笔改短别名" : "原名：\(originalTitle)")
+                Button {
                     text = row.title
                     editing = true
+                } label: {
+                    Image(systemName: "pencil")
+                        .font(.system(size: 10))
+                        .foregroundColor(.secondary)
                 }
+                .buttonStyle(.plain)
+                .help("改短别名（tab 显示用）")
+            }
         }
     }
 

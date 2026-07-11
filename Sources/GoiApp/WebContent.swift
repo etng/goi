@@ -100,7 +100,13 @@ enum EntryHTML {
         return """
         <!doctype html>
         <html><head><meta charset="utf-8">
-        <style>body { margin: 8px 12px; font-family: -apple-system; }</style>
+        <style>
+        /* some dictionaries hardcode a huge body height (e.g. 英汉大词典's
+           2000px "回到顶部" scaffold) — neutralize it or the iframe grows
+           a screenful of blank space */
+        html, body { height: auto !important; min-height: 0 !important; }
+        body { margin: 8px 12px; font-family: -apple-system; background: #fff; }
+        </style>
         <script>
         const DICT_ID = "\(dict.id)";
         document.addEventListener("click", function (e) {
@@ -241,9 +247,14 @@ enum EntryHTML {
     }
 
     static func welcomePage(loadedCount: Int, failureCount: Int, loading: Bool) -> String {
-        let status = loading
-            ? "正在加载词典…"
-            : "已加载 \(loadedCount) 本词典" + (failureCount > 0 ? "，<b>\(failureCount) 本暂时不可解析</b>（详见菜单栏 → 解析报告）" : "")
+        let status: String
+        if loading {
+            status = "正在加载词典…"
+        } else if loadedCount == 0 && failureCount == 0 {
+            status = "词典库是空的<br>到左侧 设置 → 添加词典… 选择你下载的 MDX 文件或目录<br>（克隆导入，不占额外空间，导入后原文件随意处置）"
+        } else {
+            status = "已加载 \(loadedCount) 本词典" + (failureCount > 0 ? "，<b>\(failureCount) 本暂时不可解析</b>（详见菜单栏 → 解析报告）" : "")
+        }
         return """
         <!doctype html><html><head><meta charset="utf-8"><style>
         body { margin:0; font-family:-apple-system; background:#f6f6f8; color:#777;
