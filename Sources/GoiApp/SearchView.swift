@@ -357,11 +357,17 @@ struct RootView: View {
                 }
                 Spacer()
                 // app identity anchored at the ribbon's bottom-left
-                VStack(spacing: 1) {
-                    Text("語").font(.system(size: 15, weight: .medium))
-                    Text(isDev ? "Goi ᴅ" : "Goi").font(.system(size: 8))
+                VStack(spacing: 2) {
+                    if let logo = NSImage(contentsOf: Bundle.main.resourceURL?.appendingPathComponent("logo.png") ?? URL(fileURLWithPath: "/dev/null")) {
+                        Image(nsImage: logo).resizable().frame(width: 26, height: 26)
+                            .clipShape(RoundedRectangle(cornerRadius: 6))
+                    } else {
+                        Text("語").font(.system(size: 15, weight: .medium)).foregroundColor(.secondary)
+                    }
+                    if isDev {
+                        Text("DEV").font(.system(size: 7, weight: .semibold)).foregroundColor(.secondary)
+                    }
                 }
-                .foregroundColor(.secondary)
                 .padding(.bottom, 2)
             }
             .padding(.vertical, 10)

@@ -1,0 +1,22 @@
+<svg viewBox="0 0 1024 1024" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#93accf"/>
+      <stop offset="1" stop-color="#5c7ba6"/>
+    </linearGradient>
+    <linearGradient id="lensGlass" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#ffffff" stop-opacity="0.42"/>
+      <stop offset="1" stop-color="#ffffff" stop-opacity="0.14"/>
+    </linearGradient>
+  </defs>
+  <!-- macOS squircle background (corner radius ≈ 22.37%) -->
+  <rect width="1024" height="1024" rx="229" fill="url(#bg)"/>
+  <!-- glyph -->
+  <text x="452" y="595" font-family="PingFang SC, Hiragino Sans, sans-serif" font-size="430"
+        font-weight="700" fill="#ffffff" text-anchor="middle">語</text>
+  <!-- magnifier focusing the character -->
+  <g transform="translate(635 655)" stroke="#33506f" stroke-width="52" fill="none" stroke-linecap="round">
+    <circle cx="0" cy="0" r="154" fill="url(#lensGlass)"/>
+    <line x1="112" y1="112" x2="250" y2="250"/>
+  </g>
+</svg>

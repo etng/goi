@@ -32,6 +32,7 @@ cat > "$APP/Contents/Info.plist" <<PLIST
     <key>CFBundleName</key><string>${APP_NAME}</string>
     <key>CFBundleDisplayName</key><string>${APP_NAME}</string>
     <key>CFBundlePackageType</key><string>APPL</string>
+    <key>CFBundleIconFile</key><string>AppIcon</string>
     <key>CFBundleShortVersionString</key><string>${VERSION}</string>
     <key>CFBundleVersion</key><string>${VERSION}</string>
     <key>LSMinimumSystemVersion</key><string>13.0</string>
@@ -43,6 +44,11 @@ cat > "$APP/Contents/Info.plist" <<PLIST
 PLIST
 
 cp .build/release/GoiApp "$APP/Contents/MacOS/GoiApp"
+
+# app icon + in-app ribbon logo
+mkdir -p "$APP/Contents/Resources"
+[ -f assets/icon/AppIcon.icns ] && cp assets/icon/AppIcon.icns "$APP/Contents/Resources/AppIcon.icns"
+[ -f assets/icon/logo.png ] && cp assets/icon/logo.png "$APP/Contents/Resources/logo.png"
 
 # donation QR codes shown on the About page
 if compgen -G "assets/donate/*.png" >/dev/null || compgen -G "assets/donate/*.jpg" >/dev/null; then
