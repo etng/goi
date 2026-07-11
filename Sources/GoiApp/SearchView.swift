@@ -53,6 +53,7 @@ final class SearchViewModel: ObservableObject {
     @Published var selectedTab = ""          // dictionary id, "" = 全部
     @Published var defaultTab: String? = UserDefaults.standard.string(forKey: "defaultTabID")
     @Published var inWordbook = false
+    @Published var comments: [VocabStore.CommentRow] = []
     @Published private(set) var html: String
     private(set) var htmlVersion = 0
     private(set) var lastResult: DictionaryStore.SearchResult?
@@ -224,12 +225,15 @@ final class SearchViewModel: ObservableObject {
     }
 
     private func renderCurrent() {
-        guard let result = lastResult else { return }
-        // the user's own record for this word: stats + comments
+        guard let result = lastResult else {
+            comments = []
+            return
+        }
+        // the user's own record for this word: stats (in-page) + comments (native bar)
         let info = result.resolvedWord.flatMap { vocab.info(lemma: $0) }
-        let comments = result.resolvedWord.map { vocab.comments(lemma: $0) } ?? []
+        comments = result.resolvedWord.map { vocab.comments(lemma: $0) } ?? []
         if selectedTab == "" {
-            setHTML(EntryHTML.resultsPage(result: result, wordInfo: info, comments: comments))
+            setHTML(EntryHTML.resultsPage(result: result, wordInfo: info))
         } else {
             let filtered = DictionaryStore.SearchResult(
                 query: result.query,
@@ -237,8 +241,14 @@ final class SearchViewModel: ObservableObject {
                 sections: result.sections.filter { $0.dict.id == selectedTab },
                 resolvedWord: result.resolvedWord
             )
-            setHTML(EntryHTML.resultsPage(result: filtered, wordInfo: info, comments: comments))
+            setHTML(EntryHTML.resultsPage(result: filtered, wordInfo: info))
         }
+    }
+
+    func addComment(_ text: String) {
+        guard let lemma = currentLemma else { return }
+        vocab.addComment(lemma: lemma, content: text)
+        comments = vocab.comments(lemma: lemma)
     }
 
     // MARK: - Vocabulary
@@ -443,12 +453,100 @@ struct SearchView: View {
             }
 
             ResultsWebView(model: model)
+
+            if model.currentLemma != nil {
+                NotesBar(model: model)
+            }
         }
         .onReceive(NotificationCenter.default.publisher(for: .goiPanelShown)) { _ in
             focused = true
         }
         .onChange(of: model.query) { _ in model.queryChanged() }
     }
+}
+
+/// Fixed "我的心得" region pinned to the bottom of the search view — the
+/// signature user-facing feature, always visible and quick to reach.
+struct NotesBar: View {
+    @ObservedObject var model: SearchViewModel
+    @State private var draft = ""
+    @State private var expanded = true
+    @FocusState private var editing: Bool
+
+    var body: some View {
+        VStack(spacing: 0) {
+            Divider()
+            HStack(spacing: 6) {
+                Image(systemName: "lightbulb").font(.system(size: 12)).foregroundColor(.orange)
+                Text("我的心得").font(.system(size: 12, weight: .semibold))
+                if !model.comments.isEmpty {
+                    Text("\(model.comments.count)").font(.system(size: 11)).foregroundColor(.secondary)
+                }
+                Spacer()
+                Button {
+                    withAnimation(.easeInOut(duration: 0.15)) { expanded.toggle() }
+                } label: {
+                    Image(systemName: expanded ? "chevron.down" : "chevron.up")
+                        .font(.system(size: 11)).foregroundColor(.secondary)
+                }
+                .buttonStyle(.plain)
+            }
+            .padding(.horizontal, 14)
+            .padding(.vertical, 7)
+            .background(Color.primary.opacity(0.03))
+
+            if expanded {
+                HStack(alignment: .bottom, spacing: 8) {
+                    TextField("记录你对这个词的理解、联想、例句…（⌘↩ 保存）", text: $draft, axis: .vertical)
+                        .textFieldStyle(.roundedBorder)
+                        .font(.system(size: 13))
+                        .lineLimit(1...4)
+                        .focused($editing)
+                    Button("保存", action: save)
+                        .keyboardShortcut(.return, modifiers: .command)
+                        .disabled(draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                }
+                .padding(.horizontal, 14)
+                .padding(.vertical, 8)
+
+                if !model.comments.isEmpty {
+                    ScrollView {
+                        VStack(alignment: .leading, spacing: 0) {
+                            ForEach(model.comments) { comment in
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text(Self.dateFormatter.string(from: comment.ts))
+                                        .font(.system(size: 10)).foregroundColor(.secondary)
+                                    Text(comment.content)
+                                        .font(.system(size: 13))
+                                        .textSelection(.enabled)
+                                        .fixedSize(horizontal: false, vertical: true)
+                                }
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .padding(.horizontal, 14)
+                                .padding(.vertical, 6)
+                                Divider()
+                            }
+                        }
+                    }
+                    .frame(maxHeight: 150)
+                }
+            }
+        }
+        .background(.regularMaterial)
+    }
+
+    private func save() {
+        let text = draft.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !text.isEmpty else { return }
+        model.addComment(text)
+        draft = ""
+    }
+
+    private static let dateFormatter: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "yyyy-MM-dd HH:mm"
+        return formatter
+    }()
 }
 
 // MARK: - Dictionary tabs (click to filter, drag to reorder, right-click for default)
@@ -617,11 +715,6 @@ struct ResultsWebView: NSViewRepresentable {
             case "entry":
                 if let word = body["word"] as? String, !word.isEmpty {
                     model.search(word)
-                }
-            case "comment":
-                if let lemma = body["lemma"] as? String,
-                   let text = body["text"] as? String {
-                    model.vocab.addComment(lemma: lemma, content: text)
                 }
             case "sound":
                 guard let dictID = body["dict"] as? String,

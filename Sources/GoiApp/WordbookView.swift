@@ -536,38 +536,44 @@ struct SettingsView: View {
     }
 }
 
-/// Inline rename: double-click to edit, Enter/blur commits the alias.
+/// Double-click the name to open a small editor popover for the tab alias.
 private struct AliasField: View {
     let row: SettingsView.Row
     let store: DictionaryStore
     var onChanged: () -> Void
-    @State private var editing = false
+    @State private var showingEditor = false
     @State private var text = ""
+    @FocusState private var focused: Bool
 
     var body: some View {
-        if editing {
-            TextField("", text: $text, onCommit: commit)
-                .textFieldStyle(.roundedBorder)
-                .font(.system(size: 12))
-                .frame(maxWidth: 260)
-                .onExitCommand { editing = false }
-        } else {
-            HStack(spacing: 4) {
-                Text(row.title)
-                    .lineLimit(1)
-                    .help(originalTitle == row.title ? "点铅笔改短别名" : "原名：\(originalTitle)")
-                Button {
-                    text = row.title
-                    editing = true
-                } label: {
-                    Image(systemName: "pencil")
-                        .font(.system(size: 10))
-                        .foregroundColor(.secondary)
-                }
-                .buttonStyle(.plain)
-                .help("改短别名（tab 显示用）")
+        Text(row.title)
+            .lineLimit(1)
+            .contentShape(Rectangle())
+            .help(originalTitle == row.title ? "双击改短别名（tab 显示用）" : "原名：\(originalTitle)（双击修改别名）")
+            .onTapGesture(count: 2) {
+                text = row.title
+                showingEditor = true
             }
-        }
+            .popover(isPresented: $showingEditor, arrowEdge: .bottom) {
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("词典别名").font(.system(size: 12, weight: .semibold))
+                    Text("原名：\(originalTitle)")
+                        .font(.system(size: 10)).foregroundColor(.secondary)
+                        .lineLimit(2).frame(maxWidth: 260, alignment: .leading)
+                    TextField("留空恢复原名", text: $text)
+                        .textFieldStyle(.roundedBorder)
+                        .frame(width: 260)
+                        .focused($focused)
+                        .onSubmit(commit)
+                    HStack {
+                        Spacer()
+                        Button("取消") { showingEditor = false }
+                        Button("保存", action: commit).keyboardShortcut(.defaultAction)
+                    }
+                }
+                .padding(12)
+                .onAppear { focused = true }
+            }
     }
 
     private var originalTitle: String {
@@ -576,7 +582,7 @@ private struct AliasField: View {
 
     private func commit() {
         store.setAlias(text, for: row.id)
-        editing = false
+        showingEditor = false
         onChanged()
     }
 }

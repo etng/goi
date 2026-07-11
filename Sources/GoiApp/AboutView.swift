@@ -6,6 +6,9 @@ import SwiftUI
 /// Resources/donate/ (populated from assets/donate/ by scripts/make-app.sh).
 struct AboutView: View {
     private let version = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "dev"
+    @State private var checking = false
+    @State private var updateStatus = ""
+    @State private var pendingRelease: Updater.Release?
 
     private struct Acknowledgement: Identifiable {
         var id: String { name }
@@ -61,6 +64,19 @@ struct AboutView: View {
                 }
                 .font(.system(size: 12))
 
+                HStack(spacing: 8) {
+                    Button(checking ? "检查中…" : "检查更新") { checkUpdate() }
+                        .disabled(checking)
+                    if !updateStatus.isEmpty {
+                        Text(updateStatus).font(.system(size: 11)).foregroundColor(.secondary)
+                    }
+                    if let release = pendingRelease {
+                        Button("下载 \(release.version)") {
+                            NSWorkspace.shared.open(URL(string: release.downloadURL ?? release.htmlURL)!)
+                        }
+                    }
+                }
+
                 groupBox("捆绑的第三方组件", items: bundled)
                 groupBox("可选的运行时依赖（未捆绑）", items: runtime)
 
@@ -79,6 +95,24 @@ struct AboutView: View {
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+
+    private func checkUpdate() {
+        checking = true
+        updateStatus = ""
+        pendingRelease = nil
+        Updater.check { result in
+            checking = false
+            switch result {
+            case .upToDate:
+                updateStatus = "已是最新版本（\(version)）"
+            case .available(let release):
+                updateStatus = "有新版本 \(release.version)"
+                pendingRelease = release
+            case .failed(let reason):
+                updateStatus = reason
+            }
+        }
     }
 
     private var donationQRs: [(name: String, image: NSImage)] {

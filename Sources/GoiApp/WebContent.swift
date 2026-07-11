@@ -133,11 +133,11 @@ enum EntryHTML {
 
     /// The aggregated results page: one collapsible section per dictionary,
     /// entries embedded as same-origin iframes so per-dictionary CSS can't clash.
-    /// `wordInfo`/`comments` surface the user's own history for this lemma.
+    /// `wordInfo` surfaces the user's own lookup record; comments render in a
+    /// native bar below the web view.
     static func resultsPage(
         result: DictionaryStore.SearchResult,
-        wordInfo: VocabStore.WordRow? = nil,
-        comments: [VocabStore.CommentRow] = []
+        wordInfo: VocabStore.WordRow? = nil
     ) -> String {
         var sections = ""
         if let banner = result.banner {
@@ -147,7 +147,6 @@ enum EntryHTML {
             let familiarity = String(format: "%.0f", VocabStore.effectiveFamiliarity(of: info))
             var parts = ["已查 \(info.lookupCount) 次", "熟悉度 \(familiarity)"]
             if info.inWordbook { parts.append(info.manual ? "★ 生词本（手动）" : "★ 生词本") }
-            if !comments.isEmpty { parts.append("心得 \(comments.count) 条") }
             parts.append("首查 \(shortDate(info.firstSeen))")
             sections += #"<div class="wordmeta">\#(escape(parts.joined(separator: " · ")))</div>"#
         }
@@ -163,41 +162,7 @@ enum EntryHTML {
             <span class="count">\(section.indices.count)</span></summary>\(frames)</details>
             """
         }
-        if let lemma = result.resolvedWord {
-            let items = comments.map { comment in
-                #"<li><span class="note-time">\#(shortDate(comment.ts))</span><div class="note-body">\#(escape(comment.content))</div></li>"#
-            }.joined()
-            sections += """
-            <details class="notes" open><summary>我的心得<span class="count" id="noteCount">\(comments.count)</span></summary>
-            <div class="note-input">
-              <textarea id="noteText" rows="2" placeholder="记录你对「\(escape(lemma))」的理解、联想、例句…"></textarea>
-              <button onclick="goiSaveNote()">保存</button>
-            </div>
-            <ul id="noteList">\(items)</ul>
-            </details>
-            <script>
-            const GOI_LEMMA = \(jsString(lemma));
-            function goiSaveNote() {
-                const box = document.getElementById("noteText");
-                const value = box.value.trim();
-                if (!value) return;
-                webkit.messageHandlers.goi.postMessage({ type: "comment", lemma: GOI_LEMMA, text: value });
-                const li = document.createElement("li");
-                const time = document.createElement("span");
-                time.className = "note-time";
-                time.textContent = "刚刚";
-                const body = document.createElement("div");
-                body.className = "note-body";
-                body.textContent = value;
-                li.append(time, body);
-                document.getElementById("noteList").prepend(li);
-                const count = document.getElementById("noteCount");
-                count.textContent = (parseInt(count.textContent) || 0) + 1;
-                box.value = "";
-            }
-            </script>
-            """
-        }
+        // notes live in a native fixed bar below the web view, not here
         return """
         <!doctype html>
         <html><head><meta charset="utf-8">
@@ -206,14 +171,6 @@ enum EntryHTML {
         .banner { background: #fff8e1; border: 1px solid #e6d9a0; border-radius: 6px;
                   padding: 6px 10px; margin: 6px 0; font-size: 13px; }
         .wordmeta { color: #777; font-size: 12px; padding: 4px 2px; }
-        .notes .note-input { display: flex; gap: 8px; padding: 8px 10px; }
-        .notes textarea { flex: 1; resize: vertical; font: 13px -apple-system;
-                          border: 1px solid #ddd; border-radius: 6px; padding: 6px 8px; }
-        .notes button { align-self: flex-end; font-size: 12px; padding: 4px 14px; }
-        .notes ul { list-style: none; margin: 0; padding: 0 10px 8px; }
-        .notes li { border-top: 1px solid #eee; padding: 6px 2px; }
-        .note-time { color: #aaa; font-size: 11px; margin-right: 8px; }
-        .note-body { font-size: 13px; white-space: pre-wrap; margin-top: 2px; }
         .empty { color: #888; text-align: center; padding: 48px 0; font-size: 14px; }
         details { background: #fff; border: 1px solid #ddd; border-radius: 8px;
                   margin: 8px 0; overflow: hidden; }
@@ -268,12 +225,6 @@ enum EntryHTML {
         s.replacingOccurrences(of: "&", with: "&amp;")
             .replacingOccurrences(of: "<", with: "&lt;")
             .replacingOccurrences(of: ">", with: "&gt;")
-    }
-
-    private static func jsString(_ s: String) -> String {
-        let data = (try? JSONSerialization.data(withJSONObject: [s])) ?? Data()
-        let array = String(decoding: data, as: UTF8.self)
-        return String(array.dropFirst().dropLast()) // ["..."] -> "..."
     }
 
     private static func shortDate(_ date: Date) -> String {

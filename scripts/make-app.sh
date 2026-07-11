@@ -5,6 +5,7 @@ cd "$(dirname "$0")/.."
 
 swift build -c release --product GoiApp
 
+VERSION="$(tr -d '[:space:]' < VERSION)"
 APP=dist/Goi.app
 rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS"
@@ -19,8 +20,8 @@ cat > "$APP/Contents/Info.plist" <<'PLIST'
     <key>CFBundleName</key><string>Goi</string>
     <key>CFBundleDisplayName</key><string>Goi</string>
     <key>CFBundlePackageType</key><string>APPL</string>
-    <key>CFBundleShortVersionString</key><string>0.1.0</string>
-    <key>CFBundleVersion</key><string>1</string>
+    <key>CFBundleShortVersionString</key><string>__VERSION__</string>
+    <key>CFBundleVersion</key><string>__VERSION__</string>
     <key>LSMinimumSystemVersion</key><string>13.0</string>
     <key>LSUIElement</key><true/>
     <key>NSHighResolutionCapable</key><true/>
@@ -28,6 +29,9 @@ cat > "$APP/Contents/Info.plist" <<'PLIST'
 </dict>
 </plist>
 PLIST
+
+# substitute version into the plist
+/usr/bin/sed -i '' "s/__VERSION__/${VERSION}/g" "$APP/Contents/Info.plist"
 
 cp .build/release/GoiApp "$APP/Contents/MacOS/GoiApp"
 

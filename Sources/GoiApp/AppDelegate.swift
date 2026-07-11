@@ -39,6 +39,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
 
         loadDictionaries()
+
+        Updater.checkOnLaunchIfDue { [weak self] release in
+            self?.presentUpdate(release)
+        }
+    }
+
+    private func presentUpdate(_ release: Updater.Release) {
+        let alert = NSAlert()
+        alert.messageText = "发现新版本 Goi \(release.version)"
+        alert.informativeText = (release.notes.isEmpty ? "" : release.notes + "\n\n")
+            + "当前版本 \(Updater.currentVersion)。"
+        alert.addButton(withTitle: release.downloadURL != nil ? "下载" : "查看发布")
+        alert.addButton(withTitle: "稍后")
+        NSApp.activate(ignoringOtherApps: true)
+        if alert.runModal() == .alertFirstButtonReturn {
+            NSWorkspace.shared.open(URL(string: release.downloadURL ?? release.htmlURL)!)
+        }
     }
 
     /// Accessory apps have no visible menu bar, but cmd-V/C/X/A only work

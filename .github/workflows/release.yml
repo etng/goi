@@ -1,0 +1,86 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*.*.*"
+
+permissions:
+  contents: write
+
+jobs:
+  build-and-release:
+    runs-on: macos-15
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Select latest stable Xcode
+        uses: maxim-lobanov/setup-xcode@v1
+        with:
+          xcode-version: latest-stable
+
+      - name: Validate tag is SemVer
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          if [[ ! "$TAG" =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-([0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*))?$ ]]; then
+            echo "Invalid tag: $TAG (expected v<MAJOR>.<MINOR>.<PATCH>)"
+            exit 1
+          fi
+
+      - name: Validate VERSION file matches tag
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          FILE_VERSION="$(tr -d '[:space:]' < VERSION)"
+          if [[ "${TAG#v}" != "$FILE_VERSION" ]]; then
+            echo "Tag ${TAG#v} does not match VERSION file ($FILE_VERSION). Bump VERSION before tagging."
+            exit 1
+          fi
+
+      - name: Build release zip
+        run: |
+          set -euo pipefail
+          chmod +x scripts/*.sh
+          ./scripts/make-zip.sh
+
+      - name: Verify signature
+        run: codesign -dv --verbose=4 "dist/Goi.app" || true
+
+      - name: Generate release notes
+        env:
+          TAG: ${{ github.ref_name }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          PREV_TAG="$(git tag --sort=-creatordate | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+' | grep -v "^${TAG}$" | head -n1 || true)"
+          RANGE="$TAG"
+          [[ -n "$PREV_TAG" ]] && RANGE="${PREV_TAG}..${TAG}"
+          {
+            echo "## Goi ${TAG}"
+            echo
+            if [[ -n "$PREV_TAG" ]]; then
+              echo "变更对比：https://github.com/${REPO}/compare/${PREV_TAG}...${TAG}"
+              echo
+            fi
+            echo "### Changes"
+            git log --no-merges --pretty='- %s (%h)' "$RANGE" || echo "- (no commits)"
+            echo
+            echo "---"
+            echo "下载 \`Goi.zip\`，解压后拖入「应用程序」。首次打开若被 Gatekeeper 拦截：右键 → 打开，或在「系统设置 → 隐私与安全性」中允许。"
+          } > dist/release-notes.md
+          cat dist/release-notes.md
+
+      - name: Publish release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          body_path: dist/release-notes.md
+          files: dist/Goi.zip
+          fail_on_unmatched_files: true
