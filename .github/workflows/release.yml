@@ -84,11 +84,12 @@ jobs:
           cat dist/release-notes.md
 
       - name: Publish release
-        uses: softprops/action-gh-release@v2
-        with:
-          tag_name: ${{ github.ref_name }}
-          body_path: dist/release-notes.md
-          files: |
-            dist/Goi.dmg
-            dist/Goi.zip
-          fail_on_unmatched_files: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          gh release create "$TAG" \
+            --title "$TAG" \
+            --notes-file dist/release-notes.md \
+            dist/Goi.dmg dist/Goi.zip
