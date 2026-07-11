@@ -5,7 +5,7 @@
 用 Swift 编写的 macOS 原生词典应用——动态加载 MDX/MDD 词典、菜单栏 Spotlight
 式查词、英日词形还原、带熟悉度的生词本，以及通过 AnkiConnect 与 Anki 双向同步。
 
-> 状态：可用原型（菜单栏应用，`scripts/make-app.sh` → `dist/Goi.app`）。
+> 状态：可用原型。
 
 ## 安装
 
@@ -50,6 +50,3 @@
 ## 许可证
 
 [GPLv3](LICENSE)。
-
----
-

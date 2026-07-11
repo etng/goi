@@ -132,10 +132,7 @@ struct AboutView: View {
     private var donationArea: some View {
         let qrs = donationQRs
         if qrs.isEmpty {
-            Text("（捐助二维码待添加：把收款码图片放进仓库 assets/donate/ 目录，\n打包时会自动进入此处显示）")
-                .font(.system(size: 11))
-                .foregroundColor(.secondary)
-                .multilineTextAlignment(.center)
+            EmptyView()
         } else {
             HStack(spacing: 40) {
                 ForEach(qrs, id: \.name) { qr in

@@ -7,7 +7,7 @@ loading, Spotlight-style lookup from the menu bar, lemmatization for English
 and Japanese, a familiarity-aware vocabulary book, and two-way Anki sync via
 AnkiConnect.
 
-> Status: working prototype (menu-bar app, `scripts/make-app.sh` → `dist/Goi.app`).
+> Status: working prototype.
 
 ## Install
 
@@ -17,7 +17,7 @@ first launch right-click → Open (or allow it in System Settings → Privacy &
 Security). The app checks GitHub for updates and can also be checked manually
 from its About page.
 
-## Planned features
+## Features
 
 - **MDX/MDD dictionaries, loaded in place** — import uses APFS copy-on-write
   clones: zero extra disk space, and deleting or moving the original files
