@@ -50,6 +50,17 @@ if compgen -G "assets/donate/*.png" >/dev/null || compgen -G "assets/donate/*.jp
   cp assets/donate/*.png assets/donate/*.jpg "$APP/Contents/Resources/donate/" 2>/dev/null || true
 fi
 
-codesign --force --sign - "$APP" >/dev/null 2>&1
-
-echo "built $APP  (${BUNDLE_ID}, v${VERSION})"
+# Prefer the stable self-signed identity (scripts/setup-signing.sh): it gives
+# every rebuild the same designated requirement, so macOS keeps the app's
+# Accessibility grant (划词取词) instead of dropping it on each cdhash change.
+# Falls back to ad-hoc when the identity isn't set up (e.g. CI).
+SIGN_KEYCHAIN="$HOME/Library/Keychains/goi-signing.keychain-db"
+CERT_NAME="Goi Local Signing"
+if [[ "${RELEASE:-0}" != "1" ]] && security find-identity -p codesigning 2>/dev/null | grep -q "$CERT_NAME"; then
+  security unlock-keychain -p "goi-local-signing" "$SIGN_KEYCHAIN" 2>/dev/null || true
+  codesign --force --sign "$CERT_NAME" "$APP" >/dev/null 2>&1
+  echo "built $APP  (${BUNDLE_ID}, v${VERSION}, signed: ${CERT_NAME})"
+else
+  codesign --force --sign - "$APP" >/dev/null 2>&1
+  echo "built $APP  (${BUNDLE_ID}, v${VERSION}, ad-hoc signed)"
+fi
