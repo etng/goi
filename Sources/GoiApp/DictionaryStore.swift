@@ -9,7 +9,10 @@ struct DictFailure {
 
 final class LoadedDictionary {
     let id: String
+    /// Original title from the dictionary header / filename.
     let title: String
+    /// What the UI shows — the user's alias when set (short names for tabs).
+    var displayTitle: String
     let mdx: MdictFile
     let resources: [MdictFile]   // sibling MDD archives, in order (X.mdd, X.1.mdd, …)
     let folder: URL
@@ -27,7 +30,11 @@ final class LoadedDictionary {
         self.title = headerTitle.isEmpty || headerTitle.lowercased() == "title (no html code allowed)"
             ? mdx.url.deletingPathExtension().lastPathComponent
             : headerTitle
+        self.displayTitle = self.title
     }
+
+    /// Every file belonging to this dictionary (for in-app deletion).
+    var fileURLs: [URL] { [mdx.url] + resources.map(\.url) }
 
     /// Resolves a resource referenced from an entry: first the MDD archives,
     /// then loose files in the dictionary's folder.
@@ -124,6 +131,10 @@ final class DictionaryStore {
                 }
             }
 
+            let aliases = UserDefaults.standard.dictionary(forKey: "dictionaryAliases") as? [String: String] ?? [:]
+            for dict in loaded {
+                if let alias = aliases[dict.id], !alias.isEmpty { dict.displayTitle = alias }
+            }
             dictionaries = Self.applySavedOrder(to: loaded)
             failures = failed
             isReady = true
@@ -276,6 +287,34 @@ final class DictionaryStore {
         items.insert(contentsOf: moving.reversed(), at: adjusted)
         dictionaries = items
         UserDefaults.standard.set(items.map(\.id), forKey: Self.orderKey)
+    }
+
+    /// Reorder to match `ids` (e.g. sorted by usage); unknown ids keep
+    /// their relative position at the end.
+    func applyOrder(ids: [String]) {
+        var rank: [String: Int] = [:]
+        for (i, id) in ids.enumerated() { rank[id] = i }
+        dictionaries = dictionaries.enumerated()
+            .sorted { a, b in
+                (rank[a.element.id] ?? ids.count + a.offset) < (rank[b.element.id] ?? ids.count + b.offset)
+            }
+            .map(\.element)
+        UserDefaults.standard.set(dictionaries.map(\.id), forKey: Self.orderKey)
+    }
+
+    /// Short alias for tabs; empty restores the original title.
+    func setAlias(_ raw: String, for id: String) {
+        guard let dict = dictionary(id: id) else { return }
+        let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        var aliases = UserDefaults.standard.dictionary(forKey: "dictionaryAliases") as? [String: String] ?? [:]
+        if trimmed.isEmpty || trimmed == dict.title {
+            aliases.removeValue(forKey: id)
+            dict.displayTitle = dict.title
+        } else {
+            aliases[id] = trimmed
+            dict.displayTitle = trimmed
+        }
+        UserDefaults.standard.set(aliases, forKey: "dictionaryAliases")
     }
 
     // MARK: - Report

@@ -276,7 +276,7 @@ struct WordbookView: View {
         text = text.replacingOccurrences(of: #"\n{3,}"#, with: "\n\n", options: .regularExpression)
             .trimmingCharacters(in: .whitespacesAndNewlines)
         if text.count > 1200 { text = String(text.prefix(1200)) + "…" }
-        return "【\(section.dict.title)】\n" + text
+        return "【\(section.dict.displayTitle)】\n" + text
     }
 
     private func savePanel(name: String, type: UTType, then: (URL) -> Void) {
@@ -389,11 +389,22 @@ struct SettingsView: View {
                     HStack {
                         Image(systemName: "line.3.horizontal")
                             .foregroundColor(.secondary.opacity(0.5))
-                        Text(row.title).lineLimit(1)
+                        AliasField(row: row, store: store, onChanged: onReorder)
                         Spacer()
                         Text("\(row.entries) 词条")
                             .font(.system(size: 11))
                             .foregroundColor(.secondary)
+                    }
+                    .contextMenu {
+                        Button("恢复原名") {
+                            store.setAlias("", for: row.id)
+                            reload()
+                            onReorder()
+                        }
+                        Divider()
+                        Button("删除词典（移到废纸篓）…", role: .destructive) {
+                            deleteDictionary(row)
+                        }
                     }
                 }
                 .onMove { source, destination in
@@ -403,9 +414,40 @@ struct SettingsView: View {
                 }
             }
             .listStyle(.inset)
+            Text("双击名称可改短别名（tab 显示用）；右键可删除词典——文件会移到废纸篓，可随时找回。")
+                .font(.system(size: 10))
+                .foregroundColor(.secondary)
+                .padding([.horizontal, .bottom], 12)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .onAppear(perform: reload)
+    }
+
+    private func deleteDictionary(_ row: Row) {
+        guard let dict = store.dictionaries.first(where: { $0.id == row.id }) else { return }
+        let files = dict.fileURLs
+        let alert = NSAlert()
+        alert.alertStyle = .warning
+        alert.messageText = "删除词典「\(dict.displayTitle)」？"
+        alert.informativeText = "以下 \(files.count) 个文件将移到废纸篓（可从废纸篓恢复）：\n"
+            + files.map { "· \($0.lastPathComponent)" }.joined(separator: "\n")
+            + "\n\n词典目录里的 CSS/图片等散文件不会被动。"
+        alert.addButton(withTitle: "移到废纸篓")
+        alert.addButton(withTitle: "取消")
+        NSApp.activate(ignoringOtherApps: true)
+        guard alert.runModal() == .alertFirstButtonReturn else { return }
+        NSWorkspace.shared.recycle(files) { _, error in
+            DispatchQueue.main.async {
+                if let error {
+                    let failure = NSAlert()
+                    failure.messageText = "删除失败"
+                    failure.informativeText = error.localizedDescription
+                    failure.runModal()
+                } else {
+                    NotificationCenter.default.post(name: .goiReloadRequested, object: nil)
+                }
+            }
+        }
     }
 
     private func chooseRoot() {
@@ -423,7 +465,44 @@ struct SettingsView: View {
 
     private func reload() {
         items = store.dictionaries.map {
-            Row(id: $0.id, title: $0.title, entries: $0.mdx.entryCount)
+            Row(id: $0.id, title: $0.displayTitle, entries: $0.mdx.entryCount)
         }
+    }
+}
+
+/// Inline rename: double-click to edit, Enter/blur commits the alias.
+private struct AliasField: View {
+    let row: SettingsView.Row
+    let store: DictionaryStore
+    var onChanged: () -> Void
+    @State private var editing = false
+    @State private var text = ""
+
+    var body: some View {
+        if editing {
+            TextField("", text: $text, onCommit: commit)
+                .textFieldStyle(.roundedBorder)
+                .font(.system(size: 12))
+                .frame(maxWidth: 260)
+                .onExitCommand { editing = false }
+        } else {
+            Text(row.title)
+                .lineLimit(1)
+                .help(originalTitle == row.title ? "双击改短别名" : "原名：\(originalTitle)（双击修改别名）")
+                .onTapGesture(count: 2) {
+                    text = row.title
+                    editing = true
+                }
+        }
+    }
+
+    private var originalTitle: String {
+        store.dictionaries.first { $0.id == row.id }?.title ?? row.title
+    }
+
+    private func commit() {
+        store.setAlias(text, for: row.id)
+        editing = false
+        onChanged()
     }
 }

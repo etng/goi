@@ -10,6 +10,7 @@ enum PanelSection: String, CaseIterable {
     case search
     case history
     case wordbook
+    case stats
     case settings
     case about
 
@@ -18,6 +19,7 @@ enum PanelSection: String, CaseIterable {
         case .search: return "magnifyingglass"
         case .history: return "clock"
         case .wordbook: return "star"
+        case .stats: return "chart.bar"
         case .settings: return "gearshape"
         case .about: return "info.circle"
         }
@@ -28,6 +30,7 @@ enum PanelSection: String, CaseIterable {
         case .search: return "查词"
         case .history: return "历史"
         case .wordbook: return "生词本"
+        case .stats: return "统计"
         case .settings: return "设置"
         case .about: return "关于"
         }
@@ -171,8 +174,13 @@ final class SearchViewModel: ObservableObject {
         renderCurrent()
     }
 
+    /// User clicked a tab (strip or overflow menu) — this is what counts
+    /// as actually *using* a dictionary in the stats.
     func selectTab(_ id: String) {
         selectedTab = id
+        if id != "", lastResult != nil {
+            vocab.recordTabUse(dictID: id)
+        }
         renderCurrent()
     }
 
@@ -210,7 +218,7 @@ final class SearchViewModel: ObservableObject {
         let counts = Dictionary(uniqueKeysWithValues: result.sections.map { ($0.dict.id, $0.indices.count) })
         var list = [DictTab(id: "", title: "全部", hits: counts.values.reduce(0, +))]
         for dict in store.dictionaries {
-            list.append(DictTab(id: dict.id, title: dict.title, hits: counts[dict.id] ?? 0))
+            list.append(DictTab(id: dict.id, title: dict.displayTitle, hits: counts[dict.id] ?? 0))
         }
         tabs = list
     }
@@ -247,6 +255,7 @@ final class SearchViewModel: ObservableObject {
             return
         }
         vocab.recordLookup(surface: result.query, lemma: lemma, source: source)
+        vocab.recordHits(dictIDs: result.sections.map { $0.dict.id })
         inWordbook = vocab.isInWordbook(lemma: lemma)
     }
 
@@ -312,6 +321,10 @@ struct RootView: View {
             case .wordbook:
                 WordbookView(vocab: model.vocab, store: model.store) { [weak model] word in
                     model?.browse(word)
+                }
+            case .stats:
+                StatsView(vocab: model.vocab, store: model.store) { [weak model] in
+                    model?.orderChanged()
                 }
             case .settings:
                 SettingsView(store: model.store) { [weak model] in model?.orderChanged() }
@@ -445,18 +458,42 @@ struct TabStrip: View {
     @State private var dragging: String?
 
     var body: some View {
-        ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: 5) {
-                ForEach(model.tabs) { tab in
-                    tabView(tab)
+        HStack(spacing: 0) {
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 5) {
+                    ForEach(model.tabs) { tab in
+                        tabView(tab)
+                    }
                 }
+                .padding(.horizontal, 10)
+                .padding(.vertical, 6)
             }
-            .padding(.horizontal, 10)
-            .padding(.vertical, 6)
-        }
-        .onDrop(of: [.text], isTargeted: nil) { _ in
-            dragging = nil
-            return true
+            .onDrop(of: [.text], isTargeted: nil) { _ in
+                dragging = nil
+                return true
+            }
+
+            // overflow picker: full dictionary list when the strip can't fit
+            Menu {
+                ForEach(model.tabs) { tab in
+                    Button {
+                        model.selectTab(tab.id)
+                    } label: {
+                        let mark = model.selectedTab == tab.id ? "✓ " : ""
+                        Text("\(mark)\(tab.title)\(tab.hits > 0 ? "（\(tab.hits)）" : "")")
+                    }
+                    .disabled(tab.hits == 0 && tab.id != "")
+                }
+            } label: {
+                Image(systemName: "chevron.down.circle")
+                    .font(.system(size: 13))
+                    .foregroundColor(.secondary)
+            }
+            .menuStyle(.borderlessButton)
+            .menuIndicator(.hidden)
+            .frame(width: 28)
+            .help("全部词典（宽度不够时从这里选）")
+            .padding(.trailing, 6)
         }
     }
 

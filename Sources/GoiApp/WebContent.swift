@@ -153,7 +153,7 @@ enum EntryHTML {
                 #"<iframe loading="lazy" src="goi://d/entry/\#(section.dict.id)/\#($0)"></iframe>"#
             }.joined()
             sections += """
-            <details open><summary>\(escape(section.dict.title))\
+            <details open><summary>\(escape(section.dict.displayTitle))\
             <span class="count">\(section.indices.count)</span></summary>\(frames)</details>
             """
         }

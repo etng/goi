@@ -59,6 +59,18 @@ final class VocabStore {
             ts REAL NOT NULL
         );
         CREATE INDEX IF NOT EXISTS idx_note_lemma ON note(lemma);
+        CREATE TABLE IF NOT EXISTS dict_hit(
+            dict_id TEXT NOT NULL,
+            day TEXT NOT NULL,
+            count INTEGER NOT NULL DEFAULT 0,
+            PRIMARY KEY(dict_id, day)
+        );
+        CREATE TABLE IF NOT EXISTS dict_use(
+            dict_id TEXT NOT NULL,
+            day TEXT NOT NULL,
+            count INTEGER NOT NULL DEFAULT 0,
+            PRIMARY KEY(dict_id, day)
+        );
         """)
     }
 
@@ -214,6 +226,86 @@ final class VocabStore {
                 ))
             }
             return out
+        }
+    }
+
+    // MARK: - Statistics
+
+    private static let dayFormatter: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "yyyy-MM-dd"
+        return formatter
+    }()
+
+    private static func today() -> String { dayFormatter.string(from: Date()) }
+
+    /// Called once per *logged* lookup with every dictionary that had a hit.
+    /// (Live previews and browse mode don't count.)
+    func recordHits(dictIDs: [String]) {
+        guard !dictIDs.isEmpty else { return }
+        let day = Self.today()
+        queue.sync {
+            for id in dictIDs {
+                run("""
+                    INSERT INTO dict_hit(dict_id, day, count) VALUES(?,?,1)
+                    ON CONFLICT(dict_id, day) DO UPDATE SET count = count + 1
+                    """, [.text(id), .text(day)])
+            }
+        }
+    }
+
+    /// A dictionary only counts as *used* when the user explicitly clicks
+    /// its tab — searches hit every dictionary automatically.
+    func recordTabUse(dictID: String) {
+        guard !dictID.isEmpty else { return }
+        let day = Self.today()
+        queue.sync {
+            run("""
+                INSERT INTO dict_use(dict_id, day, count) VALUES(?,?,1)
+                ON CONFLICT(dict_id, day) DO UPDATE SET count = count + 1
+                """, [.text(dictID), .text(day)])
+        }
+    }
+
+    /// Lookup counts per local calendar day for the heatmap.
+    func dailyLookupCounts(days: Int) -> [String: Int] {
+        let cutoff = Date().addingTimeInterval(-Double(days) * 86400).timeIntervalSince1970
+        return queue.sync {
+            var stmt: OpaquePointer?
+            guard sqlite3_prepare_v2(db, "SELECT ts FROM lookup_log WHERE ts >= ?", -1, &stmt, nil) == SQLITE_OK else { return [:] }
+            defer { sqlite3_finalize(stmt) }
+            bind(stmt, [.real(cutoff)])
+            var out: [String: Int] = [:]
+            while sqlite3_step(stmt) == SQLITE_ROW {
+                let day = Self.dayFormatter.string(from: Date(timeIntervalSince1970: sqlite3_column_double(stmt, 0)))
+                out[day, default: 0] += 1
+            }
+            return out
+        }
+    }
+
+    struct DictStat {
+        let dictID: String
+        let hits: Int
+        let uses: Int
+    }
+
+    func dictStats() -> [DictStat] {
+        queue.sync {
+            var hits: [String: Int] = [:]
+            var uses: [String: Int] = [:]
+            for (table, target) in [("dict_hit", 0), ("dict_use", 1)] {
+                var stmt: OpaquePointer?
+                guard sqlite3_prepare_v2(db, "SELECT dict_id, SUM(count) FROM \(table) GROUP BY dict_id", -1, &stmt, nil) == SQLITE_OK else { continue }
+                while sqlite3_step(stmt) == SQLITE_ROW {
+                    let id = text(stmt, 0)
+                    let value = Int(sqlite3_column_int64(stmt, 1))
+                    if target == 0 { hits[id] = value } else { uses[id] = value }
+                }
+                sqlite3_finalize(stmt)
+            }
+            let ids = Set(hits.keys).union(uses.keys)
+            return ids.map { DictStat(dictID: $0, hits: hits[$0] ?? 0, uses: uses[$0] ?? 0) }
         }
     }
 
