@@ -17,6 +17,7 @@ export default defineConfig({
   themeConfig: {
     nav: [
       { text: '使用指南', link: '/guide/what-is-goi', activeMatch: '/guide/' },
+      { text: '支持', link: '/support' },
       { text: '下载', link: 'https://github.com/etng/goi/releases/latest' },
       { text: 'GitHub', link: 'https://github.com/etng/goi' },
     ],

@@ -1,0 +1,38 @@
+name: 捐赠留名（上捐款墙）
+description: 捐赠后填写想显示在捐款墙上的名字和金额，作者核实到账后会加入。
+title: "[捐赠] "
+labels: ["donation"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        感谢支持 Goi ❤️ 请填写下面几项。作者核实到账后会给这个 issue 打上
+        `donor-wall` 标签，官网的捐款墙就会在下次更新时显示你。
+  - type: input
+    id: name
+    attributes:
+      label: 显示名称
+      description: 想显示在捐款墙上的名字（昵称即可）。
+      placeholder: 例如：张三 / Neko
+    validations:
+      required: true
+  - type: input
+    id: amount
+    attributes:
+      label: 金额（元）
+      description: 捐赠的人民币金额，只填数字。
+      placeholder: 例如：50
+    validations:
+      required: true
+  - type: input
+    id: message
+    attributes:
+      label: 留言（可选）
+      description: 想在捐款墙上留一句话吗？
+      placeholder: 例如：很好用，加油！
+    validations:
+      required: false
+  - type: markdown
+    attributes:
+      value: |
+        提交后请耐心等待作者核对；核实前不会显示。谢谢你的支持！
