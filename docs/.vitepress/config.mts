@@ -1,6 +1,15 @@
 import { defineConfig } from 'vitepress'
+import cjkFriendly from 'markdown-it-cjk-friendly'
 
 export default defineConfig({
+  markdown: {
+    // fix **bold**/*italic* that sit directly against CJK / full-width
+    // punctuation (CommonMark's flanking rules otherwise drop them)
+    config: (md) => {
+      md.use(cjkFriendly)
+    },
+  },
+
   title: 'Goi 語彙',
   description: 'macOS 上的本地词典应用：一键查词、生词本、Anki 同步。',
   lang: 'zh-CN',
