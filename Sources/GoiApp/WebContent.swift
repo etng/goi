@@ -124,17 +124,18 @@ enum EntryHTML {
             const a = e.target.closest("a");
             if (!a) return;
             const href = a.getAttribute("href") || "";
+            const label = (a.textContent || "").trim();
             if (href.startsWith("entry://")) {
                 e.preventDefault();
                 let word = decodeURIComponent(href.slice(8)).split("#")[0];
-                if (word) webkit.messageHandlers.goi.postMessage({ type: "entry", word: word });
+                if (word) webkit.messageHandlers.goi.postMessage({ type: "entry", word: word, label: label });
             } else if (href.startsWith("sound://")) {
                 e.preventDefault();
                 webkit.messageHandlers.goi.postMessage({ type: "sound", dict: DICT_ID, path: href.slice(8) });
             } else if (href.indexOf("://") === -1 && href && !href.startsWith("#")) {
                 // bare href — MDX convention for a cross-reference
                 e.preventDefault();
-                webkit.messageHandlers.goi.postMessage({ type: "entry", word: decodeURIComponent(href).split("#")[0] });
+                webkit.messageHandlers.goi.postMessage({ type: "entry", word: decodeURIComponent(href).split("#")[0], label: label });
             }
         }, true);
         </script>

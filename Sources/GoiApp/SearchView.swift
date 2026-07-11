@@ -154,6 +154,30 @@ final class SearchViewModel: ObservableObject {
         render(result)
     }
 
+    /// Follow an in-entry cross-reference link. The link target may be an
+    /// internal numeric key; query with it but show/record the readable
+    /// anchor text the user actually clicked.
+    func followLink(target rawTarget: String, label rawLabel: String) {
+        section = .search
+        let target = rawTarget.trimmingCharacters(in: .whitespacesAndNewlines)
+        let label = rawLabel.trimmingCharacters(in: CharacterSet(charactersIn: " \t\n«»→\u{300A}\u{300B}"))
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        let display = label.isEmpty ? target : label
+        suppressLiveSearch = true
+        query = display
+        guard store.isReady else { return }
+        let raw = store.search(target)
+        // present everything (search box, stats, notes, history) under the
+        // readable word, while the sections come from querying the real target
+        let shown = DictionaryStore.SearchResult(
+            query: display, banner: raw.banner, sections: raw.sections,
+            resolvedWord: raw.isEmpty ? nil : display
+        )
+        suggestions = raw.isEmpty ? store.suggestions(for: target) : []
+        logLookup(shown, source: "link")
+        render(shown)
+    }
+
     /// Jump to a word from history/wordbook — display only, no weight change.
     func browse(_ word: String) {
         section = .search
@@ -693,7 +717,7 @@ struct ResultsWebView: NSViewRepresentable {
             switch type {
             case "entry":
                 if let word = body["word"] as? String, !word.isEmpty {
-                    model.search(word)
+                    model.followLink(target: word, label: body["label"] as? String ?? "")
                 }
             case "sound":
                 guard let dictID = body["dict"] as? String,
