@@ -10,9 +10,17 @@
 ## 安装
 
 从 [最新发布](https://github.com/etng/goi/releases/latest) 下载 `Goi.dmg`（通用版，
-Apple 芯片和 Intel 都可用），双击打开后把 Goi 拖入「应用程序」。因为没有购买苹果签名，
-首次打开会被拦截，到「系统设置 → 隐私与安全性」点「仍要打开」即可（只需一次，
-[带图步骤见手册](https://etng.github.io/goi/guide/install)）。
+Apple 芯片和 Intel 都可用），双击打开后把 Goi 拖入「应用程序」。当前发布版尚未完成
+Apple Developer 公证；如果首次打开提示「无法验证」或「已损坏」，请确认安装包来自上述
+官方发布页，然后在「终端」复制执行：
+
+```sh
+xattr -dr com.apple.quarantine "/Applications/Goi.app" && open "/Applications/Goi.app"
+```
+
+这只放行当前安装的 Goi，不会关闭 Mac 的全局安全保护；若提示没有权限，在命令前加
+`sudo`。不使用终端也可以到「系统设置 → 隐私与安全性」点「仍要打开」。新下载的版本
+如果再次被拦截，需要对新 App 再执行一次。[带图步骤见手册](https://etng.github.io/goi/guide/install)。
 
 ## 功能
 

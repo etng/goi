@@ -13,10 +13,20 @@ AnkiConnect.
 
 Download `Goi.dmg` (universal — Apple Silicon and Intel) from the
 [latest release](https://github.com/etng/goi/releases/latest), open it, and drag
-Goi into Applications. The build isn't paid-signed, so the first launch is
-blocked — go to System Settings → Privacy & Security and click "Open Anyway"
-(once). The app checks GitHub for updates and can also be checked from its
-About page.
+Goi into Applications. The current release is not yet notarized with Apple
+Developer. If macOS says it can't verify Goi or that the app is damaged, first
+make sure the download came from the official release page above, then paste
+this into Terminal:
+
+```sh
+xattr -dr com.apple.quarantine "/Applications/Goi.app" && open "/Applications/Goi.app"
+```
+
+This only allows the installed copy of Goi; it does not disable Gatekeeper for
+other apps. Add `sudo` before `xattr` if macOS reports a permissions error. If
+you prefer not to use Terminal, open System Settings → Privacy & Security and
+click "Open Anyway". A newly downloaded version may need to be allowed again.
+The app checks GitHub for updates and can also be checked from its About page.
 
 ## Features
 
