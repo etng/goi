@@ -46,10 +46,10 @@ jobs:
         env:
           GH_TOKEN: ${{ steps.release-token.outputs.token }}
           PUBLIC_TAG: ${{ github.ref_name }}
-          PUBLIC_SHA: ${{ github.sha }}
           TARGET_REPOSITORY: ${{ github.repository_owner }}/goi-community
         run: |
           set -euo pipefail
+          PUBLIC_SHA="$(git rev-list -n 1 "$PUBLIC_TAG")"
           jq -n \
             --arg public_tag "$PUBLIC_TAG" \
             --arg public_sha "$PUBLIC_SHA" \
