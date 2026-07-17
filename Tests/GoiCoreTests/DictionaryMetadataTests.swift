@@ -39,6 +39,21 @@ final class DictionaryMetadataTests: XCTestCase {
         XCTAssertEqual(metadata.vendor, "其他")
     }
 
+    func testFilterCombinesFacetsAndSearchLocally() {
+        let metadata = DictionaryMetadata.infer(title: "牛津高阶英汉双解词典（第9版）")
+        var filter = DictionaryFilter()
+        filter.language = .english
+        filter.function = .learner
+        filter.vendor = "牛津"
+        filter.query = "第9版"
+        XCTAssertTrue(filter.matches(title: "牛津高阶英汉双解词典（第9版）", metadata: metadata))
+
+        filter.language = .japanese
+        XCTAssertFalse(filter.matches(title: "牛津高阶英汉双解词典（第9版）", metadata: metadata))
+        filter.clear()
+        XCTAssertFalse(filter.isActive)
+    }
+
     private func assertMetadata(
         _ title: String,
         languages: [DictionaryMetadata.Language],
