@@ -36,6 +36,8 @@ The app checks GitHub for updates and can also be checked from its About page.
 - **Instant lookup** — menu-bar residence, global hotkey summons a
   Spotlight-style panel; select text in any app and look it up with a hotkey
   (with the surrounding sentence captured as context).
+- **Cross-app lookup** — browsers, launchers, and other apps can open
+  `goi://search?word=justforfun` to look up a word directly in Goi.
 - **Lemmatization** — plurals, tenses, and Japanese conjugations are resolved
   to their base form before lookup.
 - **Familiarity model** — every lookup is logged; words you keep looking up

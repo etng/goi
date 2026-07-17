@@ -28,6 +28,8 @@ xattr -dr com.apple.quarantine "/Applications/Goi.app" && open "/Applications/Go
   且删除或移动原始文件都不会影响应用运行。
 - **即时查词**——常驻菜单栏，全局快捷键唤起 Spotlight 式面板；在任意应用里选中
   文字按快捷键即可查询（并捕获所在句子作为上下文）。
+- **跨程序查词**——浏览器、启动器和其他应用可通过
+  `goi://search?word=justforfun` 直接打开 Goi 查询指定词语。
 - **词形还原**——复数、时态、日语活用都会先还原为原型再查询。
 - **熟悉度模型**——每次查询都会记录；反复查的词自动进入生词本，手动加入的权重更高。
 - **Anki 集成**——生词以公开、文档化的笔记类型经 AnkiConnect 同步到 Anki；复习

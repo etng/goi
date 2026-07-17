@@ -33,6 +33,29 @@
 部分词典（如 NHK 发音辞典）的语音是一种特殊格式，需要安装 `ffmpeg` 才能播放；
 没装时点了会提示你。
 
+## 从浏览器和其他程序查词
+
+安装 Goi 后，浏览器、Raycast、快捷指令或其他程序可以打开下面这种地址直接查词：
+
+```text
+goi://search?word=justforfun
+```
+
+网页可以提供普通链接：
+
+```html
+<a href="goi://search?word=justforfun">使用 Goi 查词</a>
+```
+
+脚本也可以调用 macOS 的 `open` 命令：
+
+```sh
+open 'goi://search?word=justforfun'
+```
+
+中文、空格和特殊字符需要按 URL 规则编码。浏览器首次打开时可能询问是否允许启动
+Goi，这是正常的安全确认。
+
 ## 跟着链接跳转
 
 解释里带下划线的词是**跳转链接**，点一下就查那个词，搜索框会显示你点的词。

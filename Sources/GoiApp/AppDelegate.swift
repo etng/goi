@@ -1,5 +1,6 @@
 import AppKit
 import Carbon.HIToolbox
+import GoiCore
 import SwiftUI
 
 final class AppDelegate: NSObject, NSApplicationDelegate {
@@ -10,12 +11,30 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var statusItem: NSStatusItem!
     private var hotKey: HotKey?
     private var selectionHotKey: HotKey?
+    private var pendingExternalSearch: String?
 
     // screenshot mode (docs)
     var shotSection: PanelSection?
     var shotQuery: String?
     var shotDark = false
     var shotWindowFile: String?
+
+    private static var externalURLScheme: String {
+        (Bundle.main.bundleIdentifier ?? "").hasSuffix(".dev") ? "goi-dev" : "goi"
+    }
+
+    /// Launch Services calls this for both cold starts and already-running
+    /// instances. During a cold start dictionary loading is asynchronous, so
+    /// keep only the newest valid lookup and perform it once the store is ready.
+    func application(_ application: NSApplication, open urls: [URL]) {
+        for url in urls {
+            guard case let .search(word) = GoiDeepLink.parse(
+                url, expectedScheme: Self.externalURLScheme
+            ) else { continue }
+            pendingExternalSearch = word
+        }
+        performPendingExternalSearchIfReady()
+    }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.accessory)
@@ -107,6 +126,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func dictionariesLoaded() {
         statusItem.button?.appearsDisabled = false
         model.showWelcome()
+        performPendingExternalSearchIfReady()
 
         // screenshot mode: present the requested section (and lookup), then
         // publish the window number for an external screencapture
@@ -289,4 +309,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     @objc private func openReport() { NSWorkspace.shared.open(DictionaryStore.reportURL) }
 
     @objc private func reload() { loadDictionaries() }
+
+    private func performPendingExternalSearchIfReady() {
+        guard store.isReady,
+              model != nil,
+              panel != nil,
+              let word = pendingExternalSearch else { return }
+        pendingExternalSearch = nil
+        panel.show(section: .search)
+        model.search(word, source: "external-url")
+    }
 }

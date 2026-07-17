@@ -21,9 +21,11 @@ VERSION="$(tr -d '[:space:]' < VERSION)"
 if [[ "${RELEASE:-0}" == "1" ]]; then
   APP_NAME="Goi"
   BUNDLE_ID="com.etng.goi"
+  URL_SCHEME="goi"
 else
   APP_NAME="Goi (Dev)"
   BUNDLE_ID="com.etng.goi.dev"
+  URL_SCHEME="goi-dev"
 fi
 
 APP="dist/${APP_NAME}.app"
@@ -43,6 +45,15 @@ cat > "$APP/Contents/Info.plist" <<PLIST
     <key>CFBundleIconFile</key><string>AppIcon</string>
     <key>CFBundleShortVersionString</key><string>${VERSION}</string>
     <key>CFBundleVersion</key><string>${VERSION}</string>
+    <key>CFBundleURLTypes</key>
+    <array>
+        <dict>
+            <key>CFBundleTypeRole</key><string>Viewer</string>
+            <key>CFBundleURLName</key><string>${BUNDLE_ID}.external-link</string>
+            <key>CFBundleURLSchemes</key>
+            <array><string>${URL_SCHEME}</string></array>
+        </dict>
+    </array>
     <key>LSMinimumSystemVersion</key><string>13.0</string>
     <key>LSUIElement</key><true/>
     <key>NSHighResolutionCapable</key><true/>
