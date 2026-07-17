@@ -1,4 +1,5 @@
 import Carbon.HIToolbox
+import GoiCore
 import SwiftUI
 import UniformTypeIdentifiers
 
@@ -336,6 +337,7 @@ struct SettingsView: View {
     let vocab: VocabStore
     var onReorder: () -> Void
     @State private var items: [Row] = []
+    @State private var dictionaryFilter = DictionaryFilter()
     @State private var mecabPath: String? = Mecab.path
     @State private var ankiStatus = "未检测"
     @State private var copied = false
@@ -350,10 +352,17 @@ struct SettingsView: View {
         let entries: Int
         let iconURL: URL?
         let uses: Int
+        let metadata: DictionaryMetadata
     }
 
     @State private var importing = false
     @State private var importStatus = ""
+
+    private var filteredItems: [Row] {
+        items.filter {
+            dictionaryFilter.matches(title: $0.title, originalTitle: $0.original, metadata: $0.metadata)
+        }
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -499,19 +508,41 @@ struct SettingsView: View {
 
             // ---- dictionary order ----
             VStack(alignment: .leading, spacing: 6) {
-                Text("词典顺序").font(.headline)
-                Text("这里或查词页的 tab 条上都可以拖动排序；顺序即优先级（决定 tab 顺序、「全部」视图排列、Anki 释义来源）。tab 右键可设默认词典。")
+                Text("词典整理").font(.headline)
+                Text(dictionaryFilter.isActive
+                     ? "筛选只改变当前列表，不会重新请求或改变词典顺序；清除筛选后可继续拖动排序。"
+                     : "按语种、功能或出版方快速定位；拖动排序即优先级，决定查词页 tab、「全部」视图和 Anki 释义来源。")
                     .font(.system(size: 11))
                     .foregroundColor(.secondary)
             }
             .padding([.top, .horizontal], 12)
-            List {
-                ForEach(items) { row in
+            DictionaryFilterBar(
+                filter: $dictionaryFilter,
+                metadata: items.map(\.metadata),
+                resultCount: filteredItems.count,
+                totalCount: items.count
+            )
+            if filteredItems.isEmpty && !items.isEmpty {
+                VStack(spacing: 7) {
+                    Spacer()
+                    Image(systemName: "line.3.horizontal.decrease.circle")
+                        .font(.system(size: 24))
+                        .foregroundColor(.secondary)
+                    Text("没有符合这些条件的词典").font(.system(size: 13, weight: .medium))
+                    Button("清除筛选") { dictionaryFilter.clear() }.buttonStyle(.borderless)
+                    Spacer()
+                }
+                .frame(maxWidth: .infinity)
+            } else {
+                List {
+                    ForEach(filteredItems) { row in
                     HStack(spacing: 8) {
-                        Image(systemName: "line.3.horizontal")
-                            .foregroundColor(.secondary.opacity(0.5))
+                        if !dictionaryFilter.isActive {
+                            Image(systemName: "line.3.horizontal")
+                                .foregroundColor(.secondary.opacity(0.5))
+                        }
                         DictIcon(url: row.iconURL)
-                        VStack(alignment: .leading, spacing: 1) {
+                        VStack(alignment: .leading, spacing: 2) {
                             AliasField(row: row, store: store, onChanged: reloadAndNotify)
                             if row.hasAlias {
                                 Text("原名 \(row.original)")
@@ -519,6 +550,7 @@ struct SettingsView: View {
                                     .foregroundColor(.secondary)
                                     .lineLimit(1)
                             }
+                            DictionaryMetadataLine(metadata: row.metadata)
                         }
                         Spacer()
                         VStack(alignment: .trailing, spacing: 1) {
@@ -543,15 +575,17 @@ struct SettingsView: View {
                             removeDictionary(row)
                         }
                     }
+                    }
+                    .onMove { source, destination in
+                        guard !dictionaryFilter.isActive else { return }
+                        store.moveDictionaries(fromOffsets: source, toOffset: destination)
+                        reload()
+                        onReorder()
+                    }
                 }
-                .onMove { source, destination in
-                    store.moveDictionaries(fromOffsets: source, toOffset: destination)
-                    reload()
-                    onReorder()
-                }
+                .listStyle(.inset)
             }
-            .listStyle(.inset)
-            Text("双击名称改短别名（tab 显示用）；「用过 N 次」= 你主动点该词典 tab 的次数，可据此排序取舍。右键「从库中移除」只删 App 的克隆并释放引用，原始词典文件不受影响。")
+            Text("分类来自词典标题、MDX 说明和已有语种标记，只用于本机整理。双击名称可改短别名；右键移除只删除 App 的克隆，原始词典不受影响。")
                 .font(.system(size: 10))
                 .foregroundColor(.secondary)
                 .padding([.horizontal, .bottom], 12)
@@ -625,10 +659,17 @@ struct SettingsView: View {
     private func reload() {
         let uses = Dictionary(uniqueKeysWithValues: vocab.dictStats().map { ($0.dictID, $0.uses) })
         items = store.dictionaries.map {
-            Row(
+            let declaredLanguage = $0.mdx.header.attributes["Language"]
+                ?? $0.mdx.header.attributes["LanguageCode"]
+            return Row(
                 id: $0.id, title: $0.displayTitle, original: $0.title,
                 hasAlias: $0.displayTitle != $0.title, entries: $0.mdx.entryCount,
-                iconURL: $0.iconURL, uses: uses[$0.id] ?? 0
+                iconURL: $0.iconURL, uses: uses[$0.id] ?? 0,
+                metadata: DictionaryMetadata.infer(
+                    title: $0.title,
+                    summary: $0.mdx.header.summary,
+                    declaredLanguage: declaredLanguage
+                )
             )
         }
     }
