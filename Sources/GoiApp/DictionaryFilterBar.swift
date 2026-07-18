@@ -38,7 +38,7 @@ struct DictionaryFilterBar: View {
                     .foregroundColor(.secondary)
                 TextField("按词典名称搜索", text: $filter.query)
                     .textFieldStyle(.plain)
-                Text(filter.isActive ? "(resultCount) / (totalCount) 本" : "(totalCount) 本")
+                Text(filter.isActive ? "\(resultCount) / \(totalCount) 本" : "\(totalCount) 本")
                     .font(.system(size: 10))
                     .foregroundColor(.secondary)
                     .monospacedDigit()
