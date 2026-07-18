@@ -101,17 +101,27 @@ struct WordbookView: View {
     @State private var rows: [VocabStore.WordRow] = []
     @State private var status = ""
     @State private var busy = false
+    @State private var page = 0
+    @State private var total = 0
+    private let pageSize = 100
+
+    private var totalPages: Int { max(1, (total + pageSize - 1) / pageSize) }
 
     var body: some View {
         VStack(spacing: 0) {
             HStack {
                 Text("生词本").font(.headline)
-                Text("\(rows.count) 词").foregroundColor(.secondary).font(.subheadline)
+                Text("\(total) 词").foregroundColor(.secondary).font(.subheadline)
                 Spacer()
+                Button { page -= 1; reload() } label: { Image(systemName: "chevron.left") }
+                    .disabled(page == 0 || busy)
+                Text("\(page + 1) / \(totalPages)").font(.system(size: 12)).monospacedDigit()
+                Button { page += 1; reload() } label: { Image(systemName: "chevron.right") }
+                    .disabled(page + 1 >= totalPages || busy)
                 Button("导入 JSON") { importJSON() }.disabled(busy)
-                Button("导出 CSV") { exportCSV() }.disabled(busy || rows.isEmpty)
+                Button("导出 CSV") { exportCSV() }.disabled(busy || total == 0)
                 Button("导出 JSON") { exportJSON() }.disabled(busy)
-                Button("同步到 Anki") { pushToAnki() }.disabled(busy || rows.isEmpty)
+                Button("同步到 Anki") { pushToAnki() }.disabled(busy || total == 0)
                 Button("从 Anki 回读") { pullFromAnki() }
                     .disabled(busy)
                     .help("读取 Anki 复习数据（间隔/难度），把确实记住的词的熟悉度调上去")
@@ -196,23 +206,46 @@ struct WordbookView: View {
     }
 
     private func reload() {
-        rows = vocab.wordbook()
+        let requestedPage = page
+        DispatchQueue.global(qos: .userInitiated).async {
+            let count = vocab.wordbookCount()
+            let pages = max(1, (count + pageSize - 1) / pageSize)
+            let resolvedPage = min(requestedPage, pages - 1)
+            let loaded = vocab.wordbook(offset: resolvedPage * pageSize, limit: pageSize)
+            DispatchQueue.main.async {
+                total = count
+                page = resolvedPage
+                rows = loaded
+            }
+        }
     }
 
     // MARK: - Actions
 
     private func exportCSV() {
         savePanel(name: "goi-wordbook.csv", type: .commaSeparatedText) { url in
-            try? vocab.exportWordbookCSV().write(to: url)
-            status = "已导出 CSV 到 \(url.path)"
+            busy = true
+            status = "正在导出 CSV…"
+            DispatchQueue.global(qos: .userInitiated).async {
+                let succeeded = (try? vocab.exportWordbookCSV().write(to: url, options: .atomic)) != nil
+                DispatchQueue.main.async {
+                    busy = false
+                    status = succeeded ? "已导出 CSV 到 \(url.path)" : "导出 CSV 失败"
+                }
+            }
         }
     }
 
     private func exportJSON() {
         savePanel(name: "goi-vocab.json", type: .json) { url in
-            if let data = vocab.exportJSON() {
-                try? data.write(to: url)
-                status = "已导出全量数据（含查询历史）到 \(url.path)"
+            busy = true
+            status = "正在导出全量数据…"
+            DispatchQueue.global(qos: .userInitiated).async {
+                let succeeded = (try? vocab.exportJSON(to: url)) != nil
+                DispatchQueue.main.async {
+                    busy = false
+                    status = succeeded ? "已导出全量数据（含查询历史）到 \(url.path)" : "导出 JSON 失败"
+                }
             }
         }
     }
@@ -221,22 +254,30 @@ struct WordbookView: View {
         let panel = NSOpenPanel()
         panel.allowedContentTypes = [.json]
         NSApp.activate(ignoringOtherApps: true)
-        guard panel.runModal() == .OK, let url = panel.url,
-              let data = try? Data(contentsOf: url) else { return }
-        do {
-            let count = try vocab.importJSON(data)
-            reload()
-            status = "已合并导入 \(count) 个词（熟悉度取更陌生值）"
-        } catch {
-            status = "导入失败：\(error.localizedDescription)"
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        busy = true
+        status = "正在导入…"
+        DispatchQueue.global(qos: .userInitiated).async {
+            let result = Result { try vocab.importJSON(Data(contentsOf: url)) }
+            DispatchQueue.main.async {
+                busy = false
+                switch result {
+                case .success(let count):
+                    page = 0
+                    reload()
+                    status = "已合并导入 \(count) 个词（熟悉度取更陌生值）"
+                case .failure(let error):
+                    status = "导入失败：\(error.localizedDescription)"
+                }
+            }
         }
     }
 
     private func pushToAnki() {
         busy = true
         status = "正在同步到 Anki…"
-        let words = rows
         DispatchQueue.global(qos: .userInitiated).async {
+            let words = vocab.wordbook()
             let payload = words.map { row in
                 (row: row, definition: definition(for: row.lemma))
             }
@@ -265,9 +306,9 @@ struct WordbookView: View {
     private func pullFromAnki() {
         busy = true
         status = "正在读取 Anki 复习数据…"
-        let words = rows
         DispatchQueue.global(qos: .userInitiated).async {
             do {
+                let words = vocab.wordbook()
                 let stats = try AnkiClient.pullReviewStats()
                 var raised = 0
                 for row in words {

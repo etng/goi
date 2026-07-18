@@ -32,7 +32,11 @@ final class VocabStore {
             db = nil
             return
         }
+        sqlite3_busy_timeout(db, 2_000)
         exec("""
+        PRAGMA journal_mode=WAL;
+        PRAGMA synchronous=NORMAL;
+        PRAGMA temp_store=MEMORY;
         CREATE TABLE IF NOT EXISTS lookup_log(
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             surface TEXT NOT NULL,
@@ -52,6 +56,20 @@ final class VocabStore {
             anki_note_id INTEGER
         );
         CREATE INDEX IF NOT EXISTS idx_log_lemma ON lookup_log(lemma);
+        CREATE INDEX IF NOT EXISTS idx_log_ts_id ON lookup_log(ts, id);
+        CREATE INDEX IF NOT EXISTS idx_log_lemma_id ON lookup_log(lemma, id DESC);
+        CREATE INDEX IF NOT EXISTS idx_word_wordbook_seen
+            ON word(in_wordbook, last_seen DESC, lemma);
+        CREATE TABLE IF NOT EXISTS recent_lookup(
+            lemma TEXT PRIMARY KEY,
+            last_log_id INTEGER NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_recent_lookup_id
+            ON recent_lookup(last_log_id DESC);
+        CREATE TABLE IF NOT EXISTS lookup_day(
+            day TEXT PRIMARY KEY,
+            count INTEGER NOT NULL DEFAULT 0
+        );
         CREATE TABLE IF NOT EXISTS note(
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             lemma TEXT NOT NULL,
@@ -75,13 +93,15 @@ final class VocabStore {
         // migrations (harmless no-ops when the column already exists)
         exec("ALTER TABLE word ADD COLUMN familiarity_source TEXT NOT NULL DEFAULT 'auto'")
         exec("ALTER TABLE lookup_log ADD COLUMN context TEXT")
+        backfillRecentLookupIfNeeded()
+        backfillLookupDaysIfNeeded()
     }
 
     /// Direct familiarity write (e.g. Anki review data flowing back).
     func setFamiliarity(lemma: String, value: Double, source: String) {
         queue.sync {
-            run("UPDATE word SET familiarity=?, familiarity_source=? WHERE lemma=?",
-                [.real(max(0, min(100, value))), .text(source), .text(lemma)])
+            _ = run("UPDATE word SET familiarity=?, familiarity_source=? WHERE lemma=?",
+                    [.real(max(0, min(100, value))), .text(source), .text(lemma)])
         }
     }
 
@@ -95,11 +115,21 @@ final class VocabStore {
     func recordLookup(surface: String, lemma: String, source: String, context: String? = nil) {
         queue.sync {
             let now = Date().timeIntervalSince1970
+            exec("BEGIN IMMEDIATE")
             run("INSERT INTO lookup_log(surface, lemma, source, ts, context) VALUES(?,?,?,?,?)",
                 [.text(surface), .text(lemma), .text(source), .real(now),
                  context.map { Value.text($0) } ?? .null])
+            run("""
+                INSERT INTO lookup_day(day, count)
+                VALUES(strftime('%Y-%m-%d', ?, 'unixepoch', 'localtime'), 1)
+                ON CONFLICT(day) DO UPDATE SET count=count+1
+                """, [.real(now)])
+            run("""
+                INSERT INTO recent_lookup(lemma, last_log_id) VALUES(?, last_insert_rowid())
+                ON CONFLICT(lemma) DO UPDATE SET last_log_id=excluded.last_log_id
+                """, [.text(lemma)])
 
-            if var word = fetchWord(lemma) {
+            if let word = fetchWord(lemma) {
                 var familiarity = word.manual
                     ? word.familiarity
                     : Self.recovered(word.familiarity, since: word.lastSeen)
@@ -122,6 +152,7 @@ final class VocabStore {
                     """,
                     [.text(lemma), .text(surface), .int(1), .real(now), .real(now)])
             }
+            exec("COMMIT")
         }
     }
 
@@ -145,13 +176,13 @@ final class VocabStore {
 
     func removeFromWordbook(lemma: String) {
         queue.sync {
-            run("UPDATE word SET in_wordbook=0, manual=0 WHERE lemma=?", [.text(lemma)])
+            _ = run("UPDATE word SET in_wordbook=0, manual=0 WHERE lemma=?", [.text(lemma)])
         }
     }
 
     func deleteWord(lemma: String) {
         queue.sync {
-            run("DELETE FROM word WHERE lemma=?", [.text(lemma)])
+            _ = run("DELETE FROM word WHERE lemma=?", [.text(lemma)])
         }
     }
 
@@ -161,7 +192,7 @@ final class VocabStore {
 
     func setAnkiNoteID(_ noteID: Int64, lemma: String) {
         queue.sync {
-            run("UPDATE word SET anki_note_id=? WHERE lemma=?", [.int(noteID), .text(lemma)])
+            _ = run("UPDATE word SET anki_note_id=? WHERE lemma=?", [.int(noteID), .text(lemma)])
         }
     }
 
@@ -181,6 +212,18 @@ final class VocabStore {
         queue.sync {
             rows("SELECT * FROM word WHERE in_wordbook=1 ORDER BY last_seen DESC", [])
         }
+    }
+
+    func wordbook(offset: Int, limit: Int) -> [WordRow] {
+        guard offset >= 0, limit > 0 else { return [] }
+        return queue.sync {
+            rows("SELECT * FROM word WHERE in_wordbook=1 ORDER BY last_seen DESC, lemma LIMIT ? OFFSET ?",
+                 [.int(Int64(limit)), .int(Int64(offset))])
+        }
+    }
+
+    func wordbookCount() -> Int {
+        queue.sync { scalarInt("SELECT COUNT(*) FROM word WHERE in_wordbook=1", []) }
     }
 
     func allWords() -> [WordRow] {
@@ -207,6 +250,53 @@ final class VocabStore {
         let lemma: String
         let source: String
         let ts: Date
+    }
+
+    /// Removes one history entry and repairs the per-lemma recent lookup row.
+    func deleteHistory(id: Int64) {
+        queue.sync {
+            var lemma = ""
+            var day = ""
+            var stmt: OpaquePointer?
+            if sqlite3_prepare_v2(
+                db,
+                "SELECT lemma, strftime('%Y-%m-%d', ts, 'unixepoch', 'localtime') FROM lookup_log WHERE id=?",
+                -1,
+                &stmt,
+                nil
+            ) == SQLITE_OK {
+                bind(stmt, [.int(id)])
+                if sqlite3_step(stmt) == SQLITE_ROW {
+                    lemma = text(stmt, 0)
+                    day = text(stmt, 1)
+                }
+            }
+            sqlite3_finalize(stmt)
+            exec("BEGIN IMMEDIATE")
+            run("DELETE FROM lookup_log WHERE id=?", [.int(id)])
+            if !day.isEmpty {
+                run("UPDATE lookup_day SET count=count-1 WHERE day=?", [.text(day)])
+                run("DELETE FROM lookup_day WHERE day=? AND count<=0", [.text(day)])
+            }
+            if !lemma.isEmpty {
+                run("DELETE FROM recent_lookup WHERE lemma=?", [.text(lemma)])
+                run("""
+                    INSERT INTO recent_lookup(lemma, last_log_id)
+                    SELECT lemma, MAX(id) FROM lookup_log WHERE lemma=? HAVING COUNT(*) > 0
+                    """, [.text(lemma)])
+            }
+            exec("COMMIT")
+        }
+    }
+
+    func clearHistory() {
+        queue.sync {
+            exec("BEGIN IMMEDIATE")
+            run("DELETE FROM lookup_log", [])
+            run("DELETE FROM recent_lookup", [])
+            run("DELETE FROM lookup_day", [])
+            exec("COMMIT")
+        }
     }
 
     func historyCount() -> Int {
@@ -241,6 +331,24 @@ final class VocabStore {
         }
     }
 
+    /// Most recently looked-up lemmas. The projection table is maintained at
+    /// write time, so this remains O(limit) instead of grouping the full log.
+    func recentHistory(limit: Int) -> [String] {
+        guard limit > 0 else { return [] }
+        return queue.sync {
+            var stmt: OpaquePointer?
+            guard sqlite3_prepare_v2(
+                db, "SELECT lemma FROM recent_lookup ORDER BY last_log_id DESC LIMIT ?",
+                -1, &stmt, nil
+            ) == SQLITE_OK else { return [] }
+            defer { sqlite3_finalize(stmt) }
+            bind(stmt, [.int(Int64(limit))])
+            var result: [String] = []
+            while sqlite3_step(stmt) == SQLITE_ROW { result.append(text(stmt, 0)) }
+            return result
+        }
+    }
+
     // MARK: - Statistics
 
     private static let dayFormatter: DateFormatter = {
@@ -257,12 +365,14 @@ final class VocabStore {
         guard !dictIDs.isEmpty else { return }
         let day = Self.today()
         queue.sync {
+            exec("BEGIN IMMEDIATE")
             for id in dictIDs {
                 run("""
                     INSERT INTO dict_hit(dict_id, day, count) VALUES(?,?,1)
                     ON CONFLICT(dict_id, day) DO UPDATE SET count = count + 1
                     """, [.text(id), .text(day)])
             }
+            exec("COMMIT")
         }
     }
 
@@ -272,7 +382,7 @@ final class VocabStore {
         guard !dictID.isEmpty else { return }
         let day = Self.today()
         queue.sync {
-            run("""
+            _ = run("""
                 INSERT INTO dict_use(dict_id, day, count) VALUES(?,?,1)
                 ON CONFLICT(dict_id, day) DO UPDATE SET count = count + 1
                 """, [.text(dictID), .text(day)])
@@ -284,13 +394,20 @@ final class VocabStore {
         let cutoff = Date().addingTimeInterval(-Double(days) * 86400).timeIntervalSince1970
         return queue.sync {
             var stmt: OpaquePointer?
-            guard sqlite3_prepare_v2(db, "SELECT ts FROM lookup_log WHERE ts >= ?", -1, &stmt, nil) == SQLITE_OK else { return [:] }
+            guard sqlite3_prepare_v2(
+                db,
+                """
+                SELECT day, count FROM lookup_day
+                WHERE day >= date(?, 'unixepoch', 'localtime')
+                ORDER BY day
+                """,
+                -1, &stmt, nil
+            ) == SQLITE_OK else { return [:] }
             defer { sqlite3_finalize(stmt) }
             bind(stmt, [.real(cutoff)])
             var out: [String: Int] = [:]
             while sqlite3_step(stmt) == SQLITE_ROW {
-                let day = Self.dayFormatter.string(from: Date(timeIntervalSince1970: sqlite3_column_double(stmt, 0)))
-                out[day, default: 0] += 1
+                out[text(stmt, 0)] = Int(sqlite3_column_int64(stmt, 1))
             }
             return out
         }
@@ -333,8 +450,8 @@ final class VocabStore {
         let trimmed = content.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
         queue.sync {
-            run("INSERT INTO note(lemma, content, ts) VALUES(?,?,?)",
-                [.text(lemma), .text(trimmed), .real(Date().timeIntervalSince1970)])
+            _ = run("INSERT INTO note(lemma, content, ts) VALUES(?,?,?)",
+                    [.text(lemma), .text(trimmed), .real(Date().timeIntervalSince1970)])
         }
     }
 
@@ -371,50 +488,90 @@ final class VocabStore {
 
     // MARK: - Export / import
 
-    func exportJSON() -> Data? {
-        let words = allWords().map { row -> [String: Any] in
-            [
-                "lemma": row.lemma,
-                "surfaces": row.surfaces.split(separator: "\n").map(String.init),
-                "lookup_count": row.lookupCount,
-                "first_seen": ISO8601DateFormatter().string(from: row.firstSeen),
-                "last_seen": ISO8601DateFormatter().string(from: row.lastSeen),
-                "manual": row.manual,
-                "familiarity": (Self.effectiveFamiliarity(of: row) * 10).rounded() / 10,
-                "in_wordbook": row.inWordbook,
-            ]
-        }
-        let log: [[String: Any]] = queue.sync {
-            var out: [[String: Any]] = []
-            var stmt: OpaquePointer?
-            guard sqlite3_prepare_v2(db, "SELECT surface, lemma, source, ts FROM lookup_log ORDER BY id", -1, &stmt, nil) == SQLITE_OK else { return out }
-            defer { sqlite3_finalize(stmt) }
-            while sqlite3_step(stmt) == SQLITE_ROW {
-                out.append([
-                    "surface": text(stmt, 0), "lemma": text(stmt, 1),
-                    "source": text(stmt, 2),
-                    "ts": ISO8601DateFormatter().string(from: Date(timeIntervalSince1970: sqlite3_column_double(stmt, 3))),
-                ])
+    /// Streams the full export through a sibling temporary file. The old
+    /// array-based path held every history row plus the encoded JSON in memory,
+    /// which multiplied memory use for long-lived profiles.
+    func exportJSON(to destination: URL) throws {
+        let fm = FileManager.default
+        let temporary = destination.deletingLastPathComponent()
+            .appendingPathComponent(".\(destination.lastPathComponent).\(UUID().uuidString).tmp")
+        _ = fm.createFile(atPath: temporary.path, contents: nil)
+        let handle = try FileHandle(forWritingTo: temporary)
+        do {
+            try queue.sync {
+                let iso = ISO8601DateFormatter()
+                func write(_ value: String) throws {
+                    try handle.write(contentsOf: Data(value.utf8))
+                }
+                func writeObject(_ value: [String: Any]) throws {
+                    try handle.write(contentsOf: JSONSerialization.data(withJSONObject: value, options: [.sortedKeys]))
+                }
+                func stream(_ sql: String, object: (OpaquePointer?) -> [String: Any]) throws {
+                    var stmt: OpaquePointer?
+                    guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else {
+                        throw NSError(domain: "goi", code: 2, userInfo: [NSLocalizedDescriptionKey: "无法读取导出数据"])
+                    }
+                    defer { sqlite3_finalize(stmt) }
+                    var first = true
+                    while sqlite3_step(stmt) == SQLITE_ROW {
+                        if !first { try write(",") }
+                        try writeObject(object(stmt))
+                        first = false
+                    }
+                }
+
+                try write("{\"version\":1,\"words\":[")
+                try stream("SELECT * FROM word ORDER BY last_seen DESC") { stmt in
+                    let row = WordRow(
+                        lemma: text(stmt, 0), surfaces: text(stmt, 1),
+                        lookupCount: Int(sqlite3_column_int64(stmt, 2)),
+                        firstSeen: Date(timeIntervalSince1970: sqlite3_column_double(stmt, 3)),
+                        lastSeen: Date(timeIntervalSince1970: sqlite3_column_double(stmt, 4)),
+                        manual: sqlite3_column_int64(stmt, 5) == 1,
+                        familiarity: sqlite3_column_double(stmt, 6),
+                        inWordbook: sqlite3_column_int64(stmt, 7) == 1,
+                        ankiNoteID: nil
+                    )
+                    return [
+                        "lemma": row.lemma,
+                        "surfaces": row.surfaces.split(separator: "\n").map(String.init),
+                        "lookup_count": row.lookupCount,
+                        "first_seen": iso.string(from: row.firstSeen),
+                        "last_seen": iso.string(from: row.lastSeen),
+                        "manual": row.manual,
+                        "familiarity": (Self.effectiveFamiliarity(of: row) * 10).rounded() / 10,
+                        "in_wordbook": row.inWordbook,
+                    ]
+                }
+                try write("],\"lookup_log\":[")
+                try stream("SELECT surface, lemma, source, ts FROM lookup_log ORDER BY id") { stmt in
+                    [
+                        "surface": text(stmt, 0), "lemma": text(stmt, 1),
+                        "source": text(stmt, 2),
+                        "ts": iso.string(from: Date(timeIntervalSince1970: sqlite3_column_double(stmt, 3))),
+                    ]
+                }
+                try write("],\"notes\":[")
+                try stream("SELECT lemma, content, ts FROM note ORDER BY id") { stmt in
+                    [
+                        "lemma": text(stmt, 0), "content": text(stmt, 1),
+                        "ts": iso.string(from: Date(timeIntervalSince1970: sqlite3_column_double(stmt, 2))),
+                    ]
+                }
+                try write("]}")
             }
-            return out
-        }
-        let notes: [[String: Any]] = queue.sync {
-            var out: [[String: Any]] = []
-            var stmt: OpaquePointer?
-            guard sqlite3_prepare_v2(db, "SELECT lemma, content, ts FROM note ORDER BY id", -1, &stmt, nil) == SQLITE_OK else { return out }
-            defer { sqlite3_finalize(stmt) }
-            while sqlite3_step(stmt) == SQLITE_ROW {
-                out.append([
-                    "lemma": text(stmt, 0), "content": text(stmt, 1),
-                    "ts": ISO8601DateFormatter().string(from: Date(timeIntervalSince1970: sqlite3_column_double(stmt, 2))),
-                ])
+            try handle.synchronize()
+            try handle.close()
+            if fm.fileExists(atPath: destination.path) {
+                _ = try fm.replaceItemAt(destination, withItemAt: temporary)
+            } else {
+                try fm.moveItem(at: temporary, to: destination)
             }
-            return out
+        } catch {
+            try? handle.close()
+            try? fm.removeItem(at: temporary)
+            throw error
         }
-        return try? JSONSerialization.data(
-            withJSONObject: ["version": 1, "words": words, "lookup_log": log, "notes": notes],
-            options: [.prettyPrinted, .sortedKeys]
-        )
     }
 
     /// CSV laid out for direct Anki import: lemma, surfaces, definition placeholder,
@@ -437,24 +594,25 @@ final class VocabStore {
     }
 
     /// Merge-import from an exportJSON payload: keeps the more-unknown
-    /// familiarity, unions surfaces and counts, restores the log.
+    /// familiarity and unions surfaces/counts in one transaction.
     func importJSON(_ data: Data) throws -> Int {
         guard let root = try JSONSerialization.jsonObject(with: data) as? [String: Any],
               let words = root["words"] as? [[String: Any]] else {
             throw NSError(domain: "goi", code: 1, userInfo: [NSLocalizedDescriptionKey: "不是有效的 Goi 导出文件"])
         }
         let iso = ISO8601DateFormatter()
-        var imported = 0
-        for entry in words {
-            guard let lemma = entry["lemma"] as? String else { continue }
-            let surfaces = (entry["surfaces"] as? [String] ?? []).joined(separator: "\n")
-            let count = entry["lookup_count"] as? Int ?? 0
-            let manual = entry["manual"] as? Bool ?? false
-            let familiarity = entry["familiarity"] as? Double ?? 100
-            let inBook = entry["in_wordbook"] as? Bool ?? false
-            let first = (entry["first_seen"] as? String).flatMap(iso.date(from:)) ?? Date()
-            let last = (entry["last_seen"] as? String).flatMap(iso.date(from:)) ?? Date()
-            queue.sync {
+        return queue.sync {
+            exec("BEGIN IMMEDIATE")
+            var imported = 0
+            for entry in words {
+                guard let lemma = entry["lemma"] as? String else { continue }
+                let surfaces = (entry["surfaces"] as? [String] ?? []).joined(separator: "\n")
+                let count = entry["lookup_count"] as? Int ?? 0
+                let manual = entry["manual"] as? Bool ?? false
+                let familiarity = entry["familiarity"] as? Double ?? 100
+                let inBook = entry["in_wordbook"] as? Bool ?? false
+                let first = (entry["first_seen"] as? String).flatMap(iso.date(from:)) ?? Date()
+                let last = (entry["last_seen"] as? String).flatMap(iso.date(from:)) ?? Date()
                 if let existing = fetchWord(lemma) {
                     let mergedSurfaces = Set(existing.surfaces.split(separator: "\n").map(String.init))
                         .union(surfaces.split(separator: "\n").map(String.init))
@@ -482,15 +640,13 @@ final class VocabStore {
                         .int(manual ? 1 : 0), .real(familiarity), .int(inBook ? 1 : 0),
                     ])
                 }
+                imported += 1
             }
-            imported += 1
-        }
-        if let notes = root["notes"] as? [[String: Any]] {
-            for note in notes {
-                guard let lemma = note["lemma"] as? String,
-                      let content = note["content"] as? String,
-                      let ts = (note["ts"] as? String).flatMap(iso.date(from:)) else { continue }
-                queue.sync {
+            if let notes = root["notes"] as? [[String: Any]] {
+                for note in notes {
+                    guard let lemma = note["lemma"] as? String,
+                          let content = note["content"] as? String,
+                          let ts = (note["ts"] as? String).flatMap(iso.date(from:)) else { continue }
                     // skip if the identical note already exists
                     var stmt: OpaquePointer?
                     var exists = false
@@ -505,8 +661,9 @@ final class VocabStore {
                     }
                 }
             }
+            exec("COMMIT")
+            return imported
         }
-        return imported
     }
 
     // MARK: - SQLite plumbing
@@ -520,6 +677,36 @@ final class VocabStore {
 
     private func exec(_ sql: String) {
         sqlite3_exec(db, sql, nil, nil, nil)
+    }
+
+    private func backfillRecentLookupIfNeeded() {
+        guard scalarInt("SELECT COUNT(*) FROM recent_lookup", []) == 0,
+              scalarInt("SELECT COUNT(*) FROM lookup_log", []) > 0 else { return }
+        exec("""
+            INSERT INTO recent_lookup(lemma, last_log_id)
+            SELECT lemma, MAX(id) FROM lookup_log
+            WHERE TRIM(lemma) != ''
+            GROUP BY lemma
+        """)
+    }
+
+    private func backfillLookupDaysIfNeeded() {
+        guard scalarInt("SELECT COUNT(*) FROM lookup_day", []) == 0,
+              scalarInt("SELECT COUNT(*) FROM lookup_log", []) > 0 else { return }
+        exec("""
+            INSERT INTO lookup_day(day, count)
+            SELECT strftime('%Y-%m-%d', ts, 'unixepoch', 'localtime'), COUNT(*)
+            FROM lookup_log
+            GROUP BY 1
+        """)
+    }
+
+    private func scalarInt(_ sql: String, _ values: [Value]) -> Int {
+        var stmt: OpaquePointer?
+        guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else { return 0 }
+        defer { sqlite3_finalize(stmt) }
+        bind(stmt, values)
+        return sqlite3_step(stmt) == SQLITE_ROW ? Int(sqlite3_column_int64(stmt, 0)) : 0
     }
 
     @discardableResult

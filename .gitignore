@@ -6,6 +6,7 @@
 .community/
 
 # agent files live in .docs/ and are symlinked into the repo root
+AGENTS.md
 CLAUDE.md
 .claude/
 

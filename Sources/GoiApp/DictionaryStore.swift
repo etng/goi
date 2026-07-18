@@ -268,7 +268,7 @@ final class DictionaryStore {
         for byte in head {
             hash = (hash ^ UInt64(byte)) &* 0x0000_0100_0000_01b3
         }
-        hash = (hash ^ UInt64(size ?? 0)) &* 0x0000_0100_0000_01b3
+        hash = (hash ^ UInt64(size)) &* 0x0000_0100_0000_01b3
         return String(format: "%016llx", hash)
     }
 

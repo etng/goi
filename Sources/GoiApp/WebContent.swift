@@ -213,15 +213,38 @@ enum EntryHTML {
             clearTimeout(t._timer);
             t._timer = setTimeout(() => t.style.display = "none", 2600);
         }
-        // same-origin iframes: keep heights in sync with their content
-        setInterval(function () {
-            document.querySelectorAll("iframe").forEach(function (f) {
+        // Same-origin iframes report real content-size changes. ResizeObserver
+        // is event-driven and is disconnected with the document, so an idle
+        // result page no longer wakes every 350 ms forever.
+        function observeEntryFrame(frame) {
+            function install() {
                 try {
-                    const h = f.contentDocument.documentElement.scrollHeight;
-                    if (h > 20 && Math.abs(h - f.clientHeight) > 6) f.style.height = h + "px";
-                } catch (e) {}
-            });
-        }, 350);
+                    if (frame._goiResizeObserver) frame._goiResizeObserver.disconnect();
+                    const root = frame.contentDocument.documentElement;
+                    let scheduled = false;
+                    const sync = function () {
+                        scheduled = false;
+                        const height = root.scrollHeight;
+                        if (height > 20 && Math.abs(height - frame.clientHeight) > 6) {
+                            frame.style.height = height + "px";
+                        }
+                    };
+                    const observer = new ResizeObserver(function () {
+                        if (!scheduled) { scheduled = true; requestAnimationFrame(sync); }
+                    });
+                    observer.observe(root);
+                    frame._goiResizeObserver = observer;
+                    sync();
+                } catch (error) {}
+            }
+            frame.addEventListener("load", install);
+            try {
+                if (frame.contentDocument && frame.contentDocument.readyState === "complete") install();
+            } catch (error) {}
+        }
+        document.addEventListener("DOMContentLoaded", function () {
+            document.querySelectorAll("iframe").forEach(observeEntryFrame);
+        });
         </script>
         </head><body>\(sections)<div id="toast"></div></body></html>
         """

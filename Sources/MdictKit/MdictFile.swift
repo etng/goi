@@ -66,6 +66,7 @@ public final class MdictFile {
 
     private let data: Data
     private let lookupTableLock = NSLock()
+    private let recordBlockLock = NSLock()
     // Compact exact-lookup index: value >= 0 is a key index; value < 0 points
     // into `collisions` at -(value+1). Avoids one heap array per headword.
     private var _lookupTable: [String: Int]?
@@ -412,6 +413,8 @@ public final class MdictFile {
     }
 
     private func decompressedRecordBlock(_ index: Int) throws -> Data {
+        recordBlockLock.lock()
+        defer { recordBlockLock.unlock() }
         if let cached = cachedBlock, cached.index == index { return cached.content }
         let start = recordDataStart + recordCompOffsets[index]
         var r = DataReader(data, at: start)

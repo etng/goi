@@ -110,22 +110,28 @@ struct StatsView: View {
     }
 
     private func load() {
-        daily = vocab.dailyLookupCounts(days: 200)
-        totalLookups = vocab.historyCount()
-        let stats = Dictionary(uniqueKeysWithValues: vocab.dictStats().map { ($0.dictID, $0) })
-        let total = max(1, totalLookups)
-        rows = store.dictionaries.map { dict in
-            let stat = stats[dict.id]
-            let hits = stat?.hits ?? 0
-            let uses = stat?.uses ?? 0
-            let rate = Double(hits) / Double(total)
-            return Row(
-                id: dict.id, title: dict.displayTitle, hits: hits, uses: uses,
-                hitRate: min(1, rate), verdict: Self.verdict(hitRate: rate, uses: uses, total: totalLookups)
-            )
+        DispatchQueue.global(qos: .userInitiated).async {
+            let loadedDaily = vocab.dailyLookupCounts(days: 200)
+            let loadedTotal = vocab.historyCount()
+            let loadedStats = Dictionary(uniqueKeysWithValues: vocab.dictStats().map { ($0.dictID, $0) })
+            DispatchQueue.main.async {
+                daily = loadedDaily
+                totalLookups = loadedTotal
+                let denominator = max(1, loadedTotal)
+                rows = store.dictionaries.map { dict in
+                    let stat = loadedStats[dict.id]
+                    let hits = stat?.hits ?? 0
+                    let uses = stat?.uses ?? 0
+                    let rate = Double(hits) / Double(denominator)
+                    return Row(
+                        id: dict.id, title: dict.displayTitle, hits: hits, uses: uses,
+                        hitRate: min(1, rate), verdict: Self.verdict(hitRate: rate, uses: uses, total: loadedTotal)
+                    )
+                }
+                .sorted { ($0.uses, $0.hits) > ($1.uses, $1.hits) }
+                reordered = false
+            }
         }
-        .sorted { ($0.uses, $0.hits) > ($1.uses, $1.hits) }
-        reordered = false
     }
 
     private func applyUsageOrder() {
@@ -155,10 +161,14 @@ struct StatsView: View {
     }
 
     static func dayString(_ date: Date) -> String {
+        dayFormatter.string(from: date)
+    }
+
+    private static let dayFormatter: DateFormatter = {
         let formatter = DateFormatter()
         formatter.dateFormat = "yyyy-MM-dd"
-        return formatter.string(from: date)
-    }
+        return formatter
+    }()
 }
 
 /// GitHub-contributions-style grid: 26 weeks × 7 days, newest at right.
