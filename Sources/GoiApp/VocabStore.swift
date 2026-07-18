@@ -90,9 +90,12 @@ final class VocabStore {
             PRIMARY KEY(dict_id, day)
         );
         """)
-        // migrations (harmless no-ops when the column already exists)
-        exec("ALTER TABLE word ADD COLUMN familiarity_source TEXT NOT NULL DEFAULT 'auto'")
-        exec("ALTER TABLE lookup_log ADD COLUMN context TEXT")
+        if !hasColumn("familiarity_source", in: "word") {
+            exec("ALTER TABLE word ADD COLUMN familiarity_source TEXT NOT NULL DEFAULT 'auto'")
+        }
+        if !hasColumn("context", in: "lookup_log") {
+            exec("ALTER TABLE lookup_log ADD COLUMN context TEXT")
+        }
         backfillRecentLookupIfNeeded()
         backfillLookupDaysIfNeeded()
     }
@@ -677,6 +680,18 @@ final class VocabStore {
 
     private func exec(_ sql: String) {
         sqlite3_exec(db, sql, nil, nil, nil)
+    }
+
+    private func hasColumn(_ column: String, in table: String) -> Bool {
+        var stmt: OpaquePointer?
+        guard sqlite3_prepare_v2(db, "PRAGMA table_info(\(table))", -1, &stmt, nil) == SQLITE_OK else {
+            return false
+        }
+        defer { sqlite3_finalize(stmt) }
+        while sqlite3_step(stmt) == SQLITE_ROW {
+            if text(stmt, 1) == column { return true }
+        }
+        return false
     }
 
     private func backfillRecentLookupIfNeeded() {
