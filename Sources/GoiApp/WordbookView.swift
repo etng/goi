@@ -353,15 +353,15 @@ struct SettingsView: View {
         let iconURL: URL?
         let uses: Int
         let metadata: DictionaryMetadata
+        let filterIndex: DictionaryCatalogIndexEntry
     }
 
     @State private var importing = false
     @State private var importStatus = ""
 
     private var filteredItems: [Row] {
-        items.filter {
-            dictionaryFilter.matches(title: $0.title, originalTitle: $0.original, metadata: $0.metadata)
-        }
+        let matcher = dictionaryFilter.preparedMatcher()
+        return items.filter { matcher.matches($0.filterIndex) }
     }
 
     var body: some View {
@@ -661,14 +661,20 @@ struct SettingsView: View {
         items = store.dictionaries.map {
             let declaredLanguage = $0.mdx.header.attributes["Language"]
                 ?? $0.mdx.header.attributes["LanguageCode"]
+            let metadata = DictionaryMetadata.infer(
+                title: $0.title,
+                summary: $0.mdx.header.summary,
+                declaredLanguage: declaredLanguage
+            )
             return Row(
                 id: $0.id, title: $0.displayTitle, original: $0.title,
                 hasAlias: $0.displayTitle != $0.title, entries: $0.mdx.entryCount,
                 iconURL: $0.iconURL, uses: uses[$0.id] ?? 0,
-                metadata: DictionaryMetadata.infer(
-                    title: $0.title,
-                    summary: $0.mdx.header.summary,
-                    declaredLanguage: declaredLanguage
+                metadata: metadata,
+                filterIndex: DictionaryCatalogIndexEntry(
+                    title: $0.displayTitle,
+                    originalTitle: $0.title,
+                    metadata: metadata
                 )
             )
         }
@@ -774,7 +780,7 @@ struct DictIcon: View {
     let url: URL?
     var body: some View {
         Group {
-            if let url, let image = NSImage(contentsOf: url) {
+            if let url, let image = DictionaryIconCache.shared.image(at: url) {
                 Image(nsImage: image).resizable().scaledToFill()
             } else {
                 Image(systemName: "book.closed")
@@ -785,6 +791,25 @@ struct DictIcon: View {
         .frame(width: 22, height: 22)
         .background(Color.primary.opacity(0.05))
         .clipShape(RoundedRectangle(cornerRadius: 4))
+    }
+}
+
+/// Dictionary rows are rebuilt by ordinary SwiftUI state changes. Keep covers
+/// in memory so those rebuilds never synchronously reopen the same image file.
+private final class DictionaryIconCache {
+    static let shared = DictionaryIconCache()
+
+    private let images = NSCache<NSURL, NSImage>()
+
+    private init() {
+        images.countLimit = 128
+    }
+
+    func image(at url: URL) -> NSImage? {
+        if let cached = images.object(forKey: url as NSURL) { return cached }
+        guard let image = NSImage(contentsOf: url) else { return nil }
+        images.setObject(image, forKey: url as NSURL)
+        return image
     }
 }
 

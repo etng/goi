@@ -41,17 +41,38 @@ final class DictionaryMetadataTests: XCTestCase {
 
     func testFilterCombinesFacetsAndSearchLocally() {
         let metadata = DictionaryMetadata.infer(title: "牛津高阶英汉双解词典（第9版）")
+        let index = DictionaryCatalogIndexEntry(
+            title: "牛津九版",
+            originalTitle: "牛津高阶英汉双解词典（第9版）",
+            metadata: metadata
+        )
         var filter = DictionaryFilter()
         filter.language = .english
         filter.function = .learner
         filter.vendor = "牛津"
         filter.query = "第9版"
-        XCTAssertTrue(filter.matches(title: "牛津高阶英汉双解词典（第9版）", metadata: metadata))
+        XCTAssertTrue(filter.preparedMatcher().matches(index))
 
         filter.language = .japanese
-        XCTAssertFalse(filter.matches(title: "牛津高阶英汉双解词典（第9版）", metadata: metadata))
+        XCTAssertFalse(filter.preparedMatcher().matches(index))
         filter.clear()
         XCTAssertFalse(filter.isActive)
+    }
+
+    func testPreparedIndexNormalizesSearchTextOnceForRepeatedFilters() {
+        let metadata = DictionaryMetadata.infer(title: "Merriam-Webster Learner's Dictionary")
+        let index = DictionaryCatalogIndexEntry(
+            title: "韦氏学习词典",
+            originalTitle: "Merriam-Webster Learner's Dictionary",
+            metadata: metadata
+        )
+
+        var filter = DictionaryFilter()
+        filter.query = "MERRIAM"
+        XCTAssertTrue(filter.preparedMatcher().matches(index))
+
+        filter.query = "不存在"
+        XCTAssertFalse(filter.preparedMatcher().matches(index))
     }
 
     func testCurrentCommunityCatalogHasUsefulLanguageFacets() {
