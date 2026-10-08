@@ -4,6 +4,7 @@
 # private companion repositories, checked out beside the public core
 .server/
 .community/
+.goiV2/
 
 # agent files live in .docs/ and are symlinked into the repo root
 AGENTS.md
