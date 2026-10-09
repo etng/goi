@@ -22,6 +22,22 @@ xattr -dr com.apple.quarantine "/Applications/Goi.app" && open "/Applications/Go
 `sudo`。不使用终端也可以到「系统设置 → 隐私与安全性」点「仍要打开」。新下载的版本
 如果再次被拦截，需要对新 App 再执行一次。[带图步骤见手册](https://etng.github.io/goi/guide/install)。
 
+## Goi v2 跨平台客户端
+
+新版提供 macOS ARM64 与 Windows ARM64 预发布包，支持本地词典、学习记录、Anki 和可配置划词快捷键。
+[下载 Goi v2 0.3.5 与对应 GPL 源码](https://github.com/etng/goi/releases/tag/goi-v2-v0.3.5)。
+本页上方的「最新发布」仍指向原生 Swift 版，v2 使用独立的发行 tag。
+
+macOS Apple Silicon 可用 Homebrew 安装和更新：
+
+```sh
+brew install --cask etng/taps/goi-v2
+brew upgrade --cask etng/taps/goi-v2
+```
+
+安装钩子只清理 `Goi v2.app` 的 quarantine 属性。当前 macOS 包使用 Apple Development
+签名，尚未公证；Windows 包未配置代码签名。划词的辅助功能权限仍需在系统设置中授予。
+
 ## 功能
 
 - **就地加载 MDX/MDD 词典**——导入采用 APFS 写时复制克隆：不占额外磁盘空间，
