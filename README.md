@@ -24,7 +24,7 @@ xattr -dr com.apple.quarantine "/Applications/Goi.app" && open "/Applications/Go
 
 ## Goi v2 跨平台客户端
 
-新版提供 macOS ARM64 与 Windows ARM64 预发布包，支持本地词典、学习记录、Anki 和可配置划词快捷键。
+新版提供 macOS ARM64 与 Windows ARM64 安装包，支持本地词典、学习记录、Anki 和可配置划词快捷键。
 [下载 Goi v2 0.3.5 与对应 GPL 源码](https://github.com/etng/goi/releases/tag/goi-v2-v0.3.5)。
 本页上方的「最新发布」仍指向原生 Swift 版，v2 使用独立的发行 tag。
 
